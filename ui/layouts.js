@@ -1,0 +1,88 @@
+// ui/layouts.js
+import { 
+    renderHeader, 
+    renderBalanceSnippet, 
+    renderFooter, 
+    divider, 
+    renderImmoCard 
+} from './components.js';
+import { formatCurrency, formatPercent } from '../utils/formatter.js';
+
+/**
+ * Der atmosphärische Einstieg: Onkel Willis Brief
+ */
+export const uncleLetterLayout = (userName) => {
+    return `
+✉️ **EIN BRIEF AUS DER TOSKANA**
+${divider}
+Mein lieber ${userName},
+
+die Luft hier ist herrlich, aber mein altes Händlerherz ist unruhig. Ich habe dir **10.000 €** auf dein Konto überwiesen. Es ist nicht viel, aber es ist ein Anfang.
+
+Die Welt der Coins ist wild – pass auf, dass du nicht alles auf einmal verhebelst. Wenn du klug bist, sicherst du deine Gewinne in Steinen und Mörtel.
+
+Enttäusche mich nicht. Wir hören uns beim nächsten Kassensturz!
+
+Dein Onkel Willi
+${renderFooter()}
+`;
+};
+
+/**
+ * Die Dashboard-Ansicht (Portfolio)
+ */
+export const portfolioLayout = (userData, assets = []) => {
+    let message = [
+        renderHeader("Dein Vermögen"),
+        renderBalanceSnippet(userData.balance),
+        `Handelsvolumen: \`${formatCurrency(userData.trading_volume)}\``,
+        divider,
+        `📊 **Assets:** ${assets.length > 0 ? '' : '_Noch keine Assets vorhanden._'}`
+    ];
+
+    assets.forEach(asset => {
+        if(asset.type === 'crypto') {
+            message.push(`• ${asset.symbol.toUpperCase()}: \`${asset.amount}\` (Profit: ${formatPercent(asset.profit)})`);
+        } else {
+            message.push(`• ${asset.name}: ${formatProgressBar(asset.condition)}`);
+        }
+    });
+
+    message.push(renderFooter());
+    return message.join('\n');
+};
+
+/**
+ * Das Trading-Interface für einen spezifischen Coin
+ */
+export const tradingViewLayout = (coinData, userBalance) => {
+    return `
+${renderHeader(`Trading: ${coinData.symbol.toUpperCase()}`)}
+Preis: \`${formatCurrency(coinData.price)}\`
+24h Change: ${formatPercent(coinData.change24h)}
+
+${renderBalanceSnippet(userBalance)}
+${divider}
+💡 *Tipp: Nutze hohe Hebel nur, wenn du das Risiko einer Liquidation verstehst.*
+${renderFooter()}
+`;
+};
+
+/**
+ * Die Immobilien-Marktplatz Ansicht
+ */
+export const immoMarketLayout = (availableImmos, userBalance) => {
+    let message = [
+        renderHeader("Immobilien-Markt"),
+        renderBalanceSnippet(userBalance),
+        divider,
+        "Wähle ein Objekt für Details:"
+    ];
+
+    availableImmos.forEach(immo => {
+        message.push(`${immo.emoji} **${immo.name}**\nPreis: \`${formatCurrency(immo.price)}\``);
+    });
+
+    message.push(renderFooter());
+    return message.join('\n');
+};
