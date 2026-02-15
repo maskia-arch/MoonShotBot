@@ -12,6 +12,7 @@ import { showLeaderboard } from './commands/rank.js';
 import { startGlobalScheduler } from './core/scheduler.js';
 import { getVersion } from './utils/versionLoader.js';
 import { mainKeyboard } from './ui/buttons.js';
+import { updateMarketPrices } from './logic/market.js'; // Wichtig für Sofort-Start
 
 if (!CONFIG.TELEGRAM_TOKEN) {
     logger.error("BOT_TOKEN fehlt in den Environment Variables!");
@@ -23,29 +24,28 @@ bot.use(session());
 
 /**
  * OPTIMIERTER INTERFACE HANDLER
- * Unterdrückt Fehler beim Löschen und sorgt für Immersion.
+ * Sorgt für sauberen Chat durch Löschen veralteter Nachrichten.
  */
 bot.use(async (ctx, next) => {
     ctx.sendInterface = async (text, extra = {}) => {
-        // 1. Button-Klick: Versuche zu editieren
+        // 1. Button-Klick: Editieren
         if (ctx.callbackQuery) {
             try {
                 return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
             } catch (e) {
-                // Falls Editieren nicht geht, löschen wir unten neu
+                // Falls Editieren fehlschlägt, löschen wir unten neu
             }
         }
 
-        // 2. Veraltete Nachricht löschen (Sauberer Chat)
+        // 2. Veraltete Nachricht löschen
         if (ctx.session?.lastMessageId) {
             try {
+                // .catch verhindert Fehlermeldungen, falls Nachricht bereits gelöscht wurde
                 await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId).catch(() => {});
-            } catch (e) {
-                // Fehler beim Löschen lautlos ignorieren
-            }
+            } catch (e) {}
         }
 
-        // 3. Neue Nachricht senden und ID speichern
+        // 3. Neue Nachricht senden
         try {
             const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
             ctx.session.lastMessageId = msg.message_id;
@@ -58,18 +58,26 @@ bot.use(async (ctx, next) => {
 });
 
 bot.catch((err, ctx) => {
-    // Verhindert, dass harmlose Lösch-Fehler den Bot-Fluss stören
     if (err.description?.includes("message to delete not found")) return;
     logger.error(`Kritischer Fehler:`, err);
 });
 
-// 4. Befehle (Nutzen jetzt die Middleware für Immersion)
+// 4. Befehle & Handler
 bot.command('start', (ctx) => handleStart(ctx));
 
-// WICHTIG: Die hears-Handler rufen jetzt ctx.sendInterface auf, bevor sie in die Commands gehen
-bot.hears('📈 Trading Center', (ctx) => showTradeMenu(ctx));
+// Hears-Handler nutzen jetzt sendInterface für Immersion
+bot.hears('📈 Trading Center', async (ctx) => {
+    await ctx.sendInterface("⌛ Lade Live-Kurse..."); 
+    return showTradeMenu(ctx);
+});
+
 bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
-bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));
+
+bot.hears('💰 Mein Portfolio', async (ctx) => {
+    await ctx.sendInterface("⌛ Öffne Portfolio...");
+    return showWallet(ctx);
+});
+
 bot.hears('🏆 Bestenliste', (ctx) => showLeaderboard(ctx, 'wealth'));
 
 // 5. Callback-Query Handler
@@ -85,14 +93,14 @@ bot.on('callback_query', async (ctx) => {
         return ctx.sendInterface("🏠 **Hauptmenü**\nWas möchtest du tun?", mainKeyboard);
     }
 
-    // Ranking Filter
     if (action.startsWith('rank_')) return showLeaderboard(ctx, action.replace('rank_', ''));
 
     try {
-        await ctx.answerCbQuery();
+        await ctx.answerCbQuery().catch(() => {});
     } catch (e) {}
 });
 
+// 6. Startvorgang
 async function launch() {
     try {
         const version = getVersion();
@@ -100,6 +108,11 @@ async function launch() {
         if (error) throw error;
 
         await bot.launch();
+
+        // INITIALER FETCH: Verhindert "Marktdaten werden geladen" beim ersten Klick
+        logger.info("Starte initialen Marktdaten-Abruf...");
+        await updateMarketPrices().catch(e => logger.error("Erster Fetch fehlgeschlagen", e));
+
         startGlobalScheduler(bot);
 
         console.log(`🚀 MoonShot Tycoon ONLINE (v${version})`);
