@@ -40,6 +40,9 @@ ${renderFooter()}
 `;
 };
 
+/**
+ * Portfolio-Layout: Zeigt jetzt auch den Live-Gewinn (PnL) an.
+ */
 export const portfolioLayout = (userData, assets = []) => {
     let message = [
         renderHeader("Dein Vermögen"),
@@ -51,8 +54,10 @@ export const portfolioLayout = (userData, assets = []) => {
 
     assets.forEach(asset => {
         if(asset.type === 'crypto') {
+            // Zeigt Profit/Verlust in Prozent an
             const profitStr = asset.profit >= 0 ? `+${formatPercent(asset.profit)}` : formatPercent(asset.profit);
-            message.push(`• **${asset.symbol.toUpperCase()}**: \`${asset.amount}\` (PnL: ${profitStr})`);
+            const emoji = asset.profit >= 0 ? '📈' : '📉';
+            message.push(`${emoji} **${asset.symbol.toUpperCase()}**: \`${asset.amount}\` (PnL: ${profitStr})`);
         } else {
             message.push(`• **${asset.name}**: ${formatProgressBar(asset.condition)}`);
         }
@@ -62,12 +67,16 @@ export const portfolioLayout = (userData, assets = []) => {
     return message.join('\n');
 };
 
+/**
+ * Detailansicht eines Coins im Trading Center
+ */
 export const tradingViewLayout = (coinData, userBalance) => {
     const changeEmoji = coinData.change24h >= 0 ? '🟢' : '🔴';
+    const trend = coinData.change24h >= 0 ? '+' : '';
     return `
 ${renderHeader(`Trading: ${coinData.symbol.toUpperCase()}`)}
 Preis: \`${formatCurrency(coinData.price)}\`
-24h Change: ${changeEmoji} \`${formatPercent(coinData.change24h)}\`
+24h Change: ${changeEmoji} \`${trend}${formatPercent(coinData.change24h)}\`
 
 ${renderBalanceSnippet(userBalance)}
 ${divider}
@@ -77,7 +86,7 @@ ${renderFooter()}
 };
 
 /**
- * NEU: Layout für die Mengeneingabe (Kaufen/Verkaufen)
+ * Layout für die Mengeneingabe (Kaufen/Verkaufen)
  */
 export const tradeInputLayout = (coinId, type, price, limitInfo) => {
     const actionTitle = type === 'buy' ? '🛒 KAUFEN' : '💰 VERKAUFEN';
@@ -90,7 +99,7 @@ ${divider}
 ${limitInfo}
 
 ⌨️ _Bitte sende jetzt die gewünschte Anzahl als Nachricht._
-_Zum Abbrechen nutze den Button unten._
+_Zum Abbrechen nutze den Button unten oder wechsle das Menü._
 ${renderFooter()}
 `;
 };

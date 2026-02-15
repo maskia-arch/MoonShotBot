@@ -24,18 +24,13 @@ bot.use(session());
 
 /**
  * ZENTRALER INTERFACE HANDLER (Single-Message-Prinzip)
- * Fix: Initialisiert ctx.session, falls sie undefined ist.
  */
 bot.use(async (ctx, next) => {
-    // KRITISCH: Verhindert den "undefined" Fehler beim Zugriff auf lastMessageId
-    if (ctx.from && !ctx.session) {
-        ctx.session = {};
-    }
+    if (ctx.from && !ctx.session) ctx.session = {};
 
     ctx.sendInterface = async (text, extra = {}) => {
         const lastId = ctx.session?.lastMessageId;
 
-        // 1. VERSUCH: Bestehende Nachricht editieren
         if (lastId) {
             try {
                 return await ctx.telegram.editMessageText(ctx.chat.id, lastId, null, text, {
@@ -43,14 +38,12 @@ bot.use(async (ctx, next) => {
                     ...extra
                 });
             } catch (e) {
-                // Falls Editieren fehlschlägt, löschen wir die alte Nachricht
                 try {
                     await ctx.telegram.deleteMessage(ctx.chat.id, lastId).catch(() => {});
                 } catch (delErr) {}
             }
         }
 
-        // 2. NEU SENDEN
         try {
             const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
             ctx.session.lastMessageId = msg.message_id;
@@ -63,22 +56,27 @@ bot.use(async (ctx, next) => {
 });
 
 /**
- * AUTO-CLEANUP HANDLER
- * Löscht User-Eingaben sofort nach Erhalt.
+ * AUTO-CLEANUP & HANDEL-EINGABE
  */
 bot.on('text', async (ctx, next) => {
-    // User Nachricht sofort löschen
     try {
         await ctx.deleteMessage().catch(() => {});
     } catch (e) {}
 
-    if (!ctx.session?.activeTrade || ctx.message.text.startsWith('/')) return next();
+    // Wenn der User ein Menü-Kommando schreibt, löschen wir den Handels-Status
+    if (ctx.message.text.startsWith('/') || 
+        ['📈 Trading Center', '💰 Mein Portfolio', '🏠 Immobilien', '🏆 Bestenliste'].includes(ctx.message.text)) {
+        delete ctx.session.activeTrade;
+        return next();
+    }
+
+    if (!ctx.session?.activeTrade) return next();
 
     const amount = parseFloat(ctx.message.text.replace(',', '.'));
     const { coinId, type } = ctx.session.activeTrade;
 
     if (isNaN(amount) || amount <= 0) {
-        return ctx.sendInterface(`🚨 **Fehler:** Bitte gib eine gültige Anzahl für ${coinId.toUpperCase()} ein.`);
+        return ctx.sendInterface(`🚨 **Ungültige Menge!**\nBitte gib eine Zahl für ${coinId.toUpperCase()} ein.`);
     }
 
     if (type === 'buy') {
@@ -96,17 +94,40 @@ bot.catch((err, ctx) => {
 });
 
 // --- BEFEHLE & HANDLER ---
-bot.command('start', (ctx) => handleStart(ctx));
+bot.command('start', (ctx) => {
+    delete ctx.session.activeTrade;
+    return handleStart(ctx);
+});
 
-bot.hears('📈 Trading Center', (ctx) => showTradeMenu(ctx));
-bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));
-bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
-bot.hears('🏆 Bestenliste', (ctx) => showLeaderboard(ctx, 'wealth'));
+bot.hears('📈 Trading Center', (ctx) => {
+    delete ctx.session.activeTrade;
+    return showTradeMenu(ctx);
+});
+
+bot.hears('💰 Mein Portfolio', (ctx) => {
+    delete ctx.session.activeTrade;
+    return showWallet(ctx);
+});
+
+bot.hears('🏠 Immobilien', (ctx) => {
+    delete ctx.session.activeTrade;
+    return showImmoMarket(ctx);
+});
+
+bot.hears('🏆 Bestenliste', (ctx) => {
+    delete ctx.session.activeTrade;
+    return showLeaderboard(ctx, 'wealth');
+});
 
 // --- CALLBACK QUERIES ---
 bot.on('callback_query', async (ctx) => {
     const action = ctx.callbackQuery.data;
     
+    // Bei jedem Klick auf "Zurück" oder "Menü" löschen wir den Handels-Status
+    if (action === 'open_trading_center' || action === 'main_menu') {
+        delete ctx.session.activeTrade;
+    }
+
     if (action === 'open_trading_center') return showTradeMenu(ctx);
     if (action.startsWith('view_coin_')) return showTradeMenu(ctx, action.split('_')[2]);
 
@@ -129,15 +150,11 @@ bot.on('callback_query', async (ctx) => {
 
 async function launch() {
     try {
-        const version = getVersion();
         await bot.launch();
-
         logger.info("Lade initiale Marktdaten...");
-        // updateMarketPrices wird durch das neue market.js-Modul mit Fallbacks abgesichert
         await updateMarketPrices().catch(e => logger.error("Erster Fetch fehlgeschlagen", e));
-
         startGlobalScheduler(bot);
-        console.log(`🚀 MoonShot Tycoon ONLINE (v${version})`);
+        console.log(`🚀 MoonShot Tycoon ONLINE (v${getVersion()})`);
     } catch (err) {
         logger.error("Launch Error:", err);
         process.exit(1);
@@ -145,9 +162,7 @@ async function launch() {
 }
 
 const port = CONFIG.PORT || 3000;
-http.createServer((req, res) => {
-    res.writeHead(200); res.end('Bot running');
-}).listen(port);
+http.createServer((req, res) => { res.writeHead(200); res.end('Bot running'); }).listen(port);
 
 launch();
 

@@ -17,7 +17,8 @@ export const coinListButtons = (marketData) => {
     const buttons = Object.keys(marketData).map(id => {
         const coin = marketData[id];
         const change = coin.change24h >= 0 ? '📈' : '📉';
-        return [Markup.button.callback(`${change} ${id.toUpperCase()} (${coin.price.toLocaleString()}€)`, `view_coin_${id}`)];
+        // Nutze de-DE Formatierung für Konsistenz mit dem Rest des Bots
+        return [Markup.button.callback(`${change} ${id.toUpperCase()} (${coin.price.toLocaleString('de-DE')} €)`, `view_coin_${id}`)];
     });
     
     buttons.push([Markup.button.callback('🏠 Zurück zum Hauptmenü', 'main_menu')]);
@@ -37,11 +38,6 @@ export const coinActionButtons = (coinId) => {
         [Markup.button.callback('⬅️ Zurück zur Liste', 'open_trading_center')]
     ]);
 };
-
-/**
- * FALLBACK: Alte Funktion, falls noch in trade.js importiert
- */
-export const tradeControlButtons = (coinId) => coinActionButtons(coinId);
 
 /**
  * 3. HEBEL-AUSWAHL
@@ -67,7 +63,7 @@ export const leverageButtons = (coinId) => {
 export const confirmAction = (actionId) => {
     return Markup.inlineKeyboard([
         [Markup.button.callback('✅ Bestätigen', `confirm_${actionId}`)],
-        [Markup.button.callback('❌ Abbrechen', 'cancel_action')]
+        [Markup.button.callback('❌ Abbrechen', 'main_menu')]
     ]);
 };
 
@@ -87,7 +83,7 @@ export const immoMarketButtons = (immoId) => {
 export const portfolioButtons = Markup.inlineKeyboard([
     [
         Markup.button.callback('📊 Coins', 'port_crypto'),
-        Markup.button.callback('🏘️ Objekte', 'port_immo')
+        Markup.button.callback('🏠 Objekte', 'port_immo')
     ],
     [Markup.button.callback('🧾 Transaktionsverlauf', 'view_history')]
 ]);

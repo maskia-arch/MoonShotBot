@@ -11,21 +11,17 @@ import { CONFIG } from '../config.js';
 
 /**
  * ZENTRALE STEUERUNG: Zeigt die Coin-Liste oder das Detail-Menü.
- * Greift blitzschnell auf den internen Bot-Cache zu.
  */
 export async function showTradeMenu(ctx, coinId = null) {
     const userId = ctx.from.id;
 
     try {
-        // 1. Marktdaten direkt aus dem Cache holen (Keine API-Verzögerung für User)
         const marketData = await getMarketData();
         
-        // Falls der Cache leer ist (unwahrscheinlich durch Fallbacks)
         if (!marketData || Object.keys(marketData).length === 0) {
             return await ctx.sendInterface("⏳ Die Märkte werden gerade synchronisiert... Bitte versuche es in wenigen Sekunden erneut.");
         }
 
-        // --- FALL A: ÜBERSICHT ALLER COINS ---
         if (!coinId) {
             let listMsg = `📊 **Live-Marktübersicht (24h)**\n${divider}\n`;
             Object.keys(marketData).forEach(id => {
@@ -38,7 +34,6 @@ export async function showTradeMenu(ctx, coinId = null) {
             return await ctx.sendInterface(listMsg, coinListButtons(marketData));
         }
 
-        // --- FALL B: DETAIL-ANSICHT ---
         const coin = marketData[coinId.toLowerCase()];
         if (!coin) return ctx.answerCbQuery(`❌ Coin ${coinId.toUpperCase()} aktuell nicht verfügbar.`);
 
@@ -59,7 +54,7 @@ export async function showTradeMenu(ctx, coinId = null) {
 }
 
 /**
- * INITIIERT DEN EINGABE-MODUS: Berechnet Max-Werte aus dem Cache.
+ * INITIIERT DEN EINGABE-MODUS.
  */
 export async function initiateTradeInput(ctx, coinId, type) {
     const userId = ctx.from.id;
@@ -74,7 +69,6 @@ export async function initiateTradeInput(ctx, coinId, type) {
         const userHoldings = asset ? asset.amount : 0;
         const { maxBuy, maxSell } = getTradeCalculations(user.balance, coin.price, userHoldings);
 
-        // Status setzen: Die nächste Text-Nachricht des Users wird als Menge interpretiert
         ctx.session.activeTrade = { coinId, type };
 
         const actionTitle = type === 'buy' ? '🛒 KAUFEN' : '💰 VERKAUFEN';
@@ -92,12 +86,12 @@ export async function initiateTradeInput(ctx, coinId, type) {
         ]));
     } catch (err) {
         logger.error("Fehler bei Trade-Initialisierung:", err);
-        ctx.answerCbQuery("🚨 Eingabe-Modus konnte nicht gestartet werden.");
+        ctx.answerCbQuery("🚨 Eingabe-Modus Fehler.");
     }
 }
 
 /**
- * Verarbeitet den Krypto-Kauf (Mengen-basiert)
+ * Verarbeitet den Kauf.
  */
 export async function handleBuy(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
@@ -107,36 +101,47 @@ export async function handleBuy(ctx, coinId, cryptoAmount) {
         const totalCost = cryptoAmount * coin.price * (1 + tax);
 
         const { data: user } = await supabase.from('profiles').select('balance').eq('id', userId).single();
-
         if (user.balance < totalCost) {
-            return ctx.sendInterface(`❌ **Guthaben unzureichend!**\nDu benötigst \`${totalCost.toLocaleString('de-DE')} €\` (inkl. Gebühr) für diese Menge.`);
+            return ctx.sendInterface(`❌ **Guthaben unzureichend!**\nBedarf: \`${totalCost.toLocaleString('de-DE')} €\``);
         }
 
-        // Transaktion in der DB verbuchen
+        // Aktuellen Bestand holen für korrekte Addition
+        const { data: currentAsset } = await supabase.from('user_crypto')
+            .select('amount, avg_buy_price')
+            .eq('user_id', userId)
+            .eq('coin_id', coinId)
+            .single();
+
+        const oldAmount = currentAsset ? currentAsset.amount : 0;
+        const newAmount = oldAmount + cryptoAmount;
+        
+        // Neuer Durchschnittspreis
+        const oldValue = oldAmount * (currentAsset?.avg_buy_price || 0);
+        const newValue = cryptoAmount * coin.price;
+        const newAvgPrice = (oldValue + newValue) / newAmount;
+
         await supabase.rpc('increment_balance', { user_id: userId, amount: -totalCost });
         
-        // Bestand aktualisieren (Upsert mit Durchschnittspreis-Logik)
         await supabase.from('user_crypto').upsert({ 
             user_id: userId, 
             coin_id: coinId, 
-            amount: cryptoAmount, 
-            avg_buy_price: coin.price,
+            amount: newAmount, 
+            avg_buy_price: newAvgPrice,
             leverage: 1 
         }, { onConflict: 'user_id,coin_id' });
 
         await updateTradeStats(userId, totalCost);
         await logTransaction(userId, 'buy_crypto', totalCost, `Kauf ${cryptoAmount} ${coinId.toUpperCase()}`);
         
-        await ctx.answerCbQuery(`✅ ${cryptoAmount} ${coinId.toUpperCase()} gekauft!`);
+        await ctx.answerCbQuery(`✅ Kauf erfolgreich!`);
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Kauf-Fehler:", err);
-        ctx.sendInterface("🚨 Ein Fehler ist beim Kauf aufgetreten.");
     }
 }
 
 /**
- * Verarbeitet den Krypto-Verkauf (Mengen-basiert)
+ * Verarbeitet den Verkauf.
  */
 export async function handleSell(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
@@ -146,13 +151,12 @@ export async function handleSell(ctx, coinId, cryptoAmount) {
             .select('*').eq('user_id', userId).eq('coin_id', coinId).single();
 
         if (!asset || asset.amount < cryptoAmount) {
-            return ctx.sendInterface(`❌ **Fehler:** Dein Bestand von \`${asset ? asset.amount : 0}\` ${coinId.toUpperCase()} reicht nicht aus.`);
+            return ctx.sendInterface(`❌ **Bestand zu niedrig!** (Besitz: ${asset?.amount || 0})`);
         }
 
         const payout = cryptoAmount * coin.price;
         const newAmount = asset.amount - cryptoAmount;
 
-        // DB Update
         await supabase.rpc('increment_balance', { user_id: userId, amount: payout });
         
         if (newAmount <= 0) {
@@ -163,10 +167,9 @@ export async function handleSell(ctx, coinId, cryptoAmount) {
 
         await logTransaction(userId, 'sell_crypto', payout, `Verkauf ${cryptoAmount} ${coinId.toUpperCase()}`);
         
-        await ctx.answerCbQuery(`✅ ${cryptoAmount} ${coinId.toUpperCase()} für ${payout.toLocaleString('de-DE')} € verkauft!`);
+        await ctx.answerCbQuery(`✅ Verkauf erfolgreich!`);
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Verkauf-Fehler:", err);
-        ctx.sendInterface("🚨 Ein Fehler ist beim Verkauf aufgetreten.");
     }
 }
