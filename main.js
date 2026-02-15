@@ -158,14 +158,30 @@ bot.on('callback_query', async (ctx) => {
     } catch (e) {}
 });
 
+/**
+ * ERWEITERTE LAUNCH-LOGIK
+ * Verhindert Conflict 409 und ignoriert alte Nachrichten beim Start.
+ */
 async function launch() {
     try {
-        await bot.launch();
+        // 5 Sekunden warten, um der alten Instanz Zeit zum Beenden zu geben
+        logger.info("Warte auf Cleanup der alten Instanz...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Startet den Bot und löscht alle Nachrichten, die während der Downtime geschickt wurden
+        await bot.launch({
+            dropPendingUpdates: true
+        });
+
         logger.info("Lade initiale Marktdaten...");
         await updateMarketPrices().catch(e => logger.error("Erster Fetch fehlgeschlagen", e));
         startGlobalScheduler(bot);
         console.log(`🚀 MoonShot Tycoon ONLINE (v${getVersion()})`);
     } catch (err) {
+        if (err.description?.includes("409: Conflict")) {
+            logger.error("Kritischer Konflikt: Eine andere Instanz läuft noch. Beende Prozess.");
+            process.exit(1); 
+        }
         logger.error("Launch Error:", err);
         process.exit(1);
     }

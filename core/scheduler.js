@@ -15,7 +15,7 @@ export function startGlobalScheduler(bot) {
     logger.info("🕒 Globaler Scheduler wird initialisiert...");
 
     // 1. KRYPTO-PREIS-TICK (Alle 60 Sekunden)
-    // Aktualisiert den internen Server-Cache für Bitcoin & Litecoin.
+    // Aktualisiert den internen Server-Cache für BTC & LTC und prüft Liquidationen.
     setInterval(async () => {
         try {
             // Holt die neuesten Kurse lautlos in den Cache
@@ -26,7 +26,12 @@ export function startGlobalScheduler(bot) {
             
             logger.debug("⚡ Markt-Synchronisation (60s) erfolgreich.");
         } catch (err) {
-            logger.error("Fehler im 60s Markt-Update:", err);
+            // Spezielle Behandlung für API-Limits (Error 429), um Bot-Sperren zu vermeiden
+            if (err.message.includes('429')) {
+                logger.warn("⚠️ API-Limit erreicht. Scheduler pausiert kurzzeitig.");
+            } else {
+                logger.error("Fehler im 60s Markt-Update:", err);
+            }
         }
     }, 60000); 
 
@@ -35,7 +40,9 @@ export function startGlobalScheduler(bot) {
     setInterval(async () => {
         try {
             logger.info("--- START WIRTSCHAFTS-TICK ---");
+            // Berechnet Einkünfte und Kosten für Immobilien
             await runEconomyTick();
+            // Triggert zufällige Marktschwankungen
             await triggerRandomMarketEvent(bot);
             logger.info("--- TICK ERFOLGREICH BEENDET ---");
         } catch (err) {
@@ -44,6 +51,7 @@ export function startGlobalScheduler(bot) {
     }, CONFIG.TICK_SPEED_MS);
 
     // 3. SYSTEM-MAINTENANCE (Einmal täglich)
+    // Prüft Season-Ende und führt Datenbank-Bereinigungen durch.
     setInterval(async () => {
         try {
             await checkSeasonEnd(bot);

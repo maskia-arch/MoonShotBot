@@ -25,17 +25,18 @@ export async function updateMarketPrices() {
             throw new Error("API-Limit erreicht oder ungültige Antwort");
         }
 
+        // Wir runden die Preise direkt auf 2 Nachkommastellen für die DB
         const updates = [
             { 
                 coin_id: 'bitcoin', 
-                price_eur: data.RAW.BTC.EUR.PRICE, 
-                change_24h: data.RAW.BTC.EUR.CHANGEPCT24HOUR,
+                price_eur: parseFloat(data.RAW.BTC.EUR.PRICE.toFixed(2)), 
+                change_24h: parseFloat(data.RAW.BTC.EUR.CHANGEPCT24HOUR.toFixed(2)),
                 last_update: new Date()
             },
             { 
                 coin_id: 'litecoin', 
-                price_eur: data.RAW.LTC.EUR.PRICE, 
-                change_24h: data.RAW.LTC.EUR.CHANGEPCT24HOUR,
+                price_eur: parseFloat(data.RAW.LTC.EUR.PRICE.toFixed(2)), 
+                change_24h: parseFloat(data.RAW.LTC.EUR.CHANGEPCT24HOUR.toFixed(2)),
                 last_update: new Date()
             }
         ];
@@ -58,6 +59,8 @@ export async function getMarketData() {
         const { data, error } = await supabase.from('market_cache').select('*');
         
         if (error || !data || data.length === 0) {
+            // Falls DB leer, versuchen wir ein Update zu erzwingen
+            updateMarketPrices();
             return FALLBACK_PRICES;
         }
 
@@ -75,12 +78,22 @@ export async function getMarketData() {
 }
 
 /**
- * Bequemlichkeits-Funktion für einen einzelnen Preis
+ * Bequemlichkeits-Funktion für einen einzelnen Preis.
+ * Stellt sicher, dass das Trading-System immer valide Daten hat.
  */
 export async function getCoinPrice(coinId) {
     const market = await getMarketData();
     const id = coinId.toLowerCase();
-    return market[id] || FALLBACK_PRICES[id];
+    
+    // Falls Coin nicht im Cache, versuchen wir ihn aus den Fallbacks zu retten
+    const result = market[id] || FALLBACK_PRICES[id];
+    
+    if (!result) {
+        logger.error(`🚨 Preis-Anfrage für unbekannten Coin: ${id}`);
+        return null;
+    }
+    
+    return result;
 }
 
 // Initialer Aufruf beim Serverstart

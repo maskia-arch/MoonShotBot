@@ -10,7 +10,7 @@ export async function syncUser(id, username) {
     try {
         const { data: profile, error: pError } = await supabase
             .from('profiles')
-            .upsert({ id, username }, { onConflict: 'id' }) // INITIAL_CASH nur beim ersten Mal setzen via DB-Default oder Logic
+            .upsert({ id, username }, { onConflict: 'id' }) 
             .select().single();
 
         if (pError) throw pError;
@@ -25,7 +25,8 @@ export async function syncUser(id, username) {
 }
 
 /**
- * Holt das komplette Profil inkl. Krypto, Assets und Season-Stats
+ * Holt das komplette Profil inkl. Krypto, Assets und Season-Stats.
+ * WICHTIG: Holt auch das trading_volume für die Immobilien-Sperre.
  */
 export async function getUserProfile(id) {
     try {
@@ -43,76 +44,63 @@ export async function getUserProfile(id) {
 }
 
 /**
- * ZENTRALE FUNKTION: Aktualisiert den Krypto-Bestand (Kauf/Verkauf)
- * @param {string} userId - ID des Users
- * @param {string} coinId - ID des Coins (z.B. bitcoin)
- * @param {number} amountChange - Positive Zahl für Kauf, negative für Verkauf
- * @param {number} currentPrice - Aktueller Kurs für den Durchschnittspreis
+ * Holt nur die Krypto-Bestände für das Portfolio-Menü.
  */
-export async function updateCryptoHolding(userId, coinId, amountChange, currentPrice) {
+export async function getUserCrypto(userId) {
     try {
-        // Vorhandenen Bestand prüfen
-        const { data: current } = await supabase
+        const { data, error } = await supabase
             .from('user_crypto')
             .select('*')
-            .eq('user_id', userId)
-            .eq('coin_id', coinId)
-            .single();
-
-        if (current) {
-            const newAmount = current.amount + amountChange;
-            
-            if (newAmount <= 0) {
-                // Alles verkauft -> Eintrag löschen
-                return await supabase.from('user_crypto').delete().eq('id', current.id);
-            } else {
-                // Bestand aktualisieren
-                // Bei Kauf wird der Durchschnittspreis (avg_buy_price) gewichtet neu berechnet
-                let newAvgPrice = current.avg_buy_price;
-                if (amountChange > 0) {
-                    newAvgPrice = ((current.amount * current.avg_buy_price) + (amountChange * currentPrice)) / newAmount;
-                }
-
-                return await supabase.from('user_crypto')
-                    .update({ amount: newAmount, avg_buy_price: newAvgPrice })
-                    .eq('id', current.id);
-            }
-        } else if (amountChange > 0) {
-            // Neuer Coin-Eintrag (Erster Kauf)
-            return await supabase.from('user_crypto').insert({
-                user_id: userId,
-                coin_id: coinId,
-                amount: amountChange,
-                avg_buy_price: currentPrice
-            });
-        }
+            .eq('user_id', userId);
+        
+        if (error) throw error;
+        return data || [];
     } catch (err) {
-        logger.error("Fehler bei updateCryptoHolding:", err);
-        throw err;
+        logger.error("Fehler bei getUserCrypto:", err);
+        return [];
     }
 }
 
 /**
- * Verbucht einen Trade und aktualisiert die Season-Performance
+ * Loggt jede Transaktion für die Historie.
  */
-export async function updateTradeStats(userId, amount, pnl = 0) {
+export async function logTransaction(userId, type, amount, description) {
     try {
-        // 1. Handelsvolumen im Profil erhöhen
-        await supabase.rpc('add_trading_volume', { user_id: userId, amount: Math.abs(amount) });
-
-        // 2. Season Stats aktualisieren (Profit oder Loss)
-        if (pnl > 0) {
-            await supabase.rpc('update_season_profit', { user_id: userId, pnl_amount: pnl });
-        } else if (pnl < 0) {
-            await supabase.rpc('update_season_loss', { user_id: userId, pnl_amount: Math.abs(pnl) });
-        }
+        const { error } = await supabase.from('transactions').insert({
+            user_id: userId, 
+            type, 
+            amount, 
+            description,
+            created_at: new Date()
+        });
+        if (error) throw error;
     } catch (err) {
-        logger.error("Fehler beim Update der Trade-Stats:", err);
+        logger.error("Transaktions-Log fehlgeschlagen:", err.message);
     }
 }
 
 /**
- * Dynamische Leaderboard-Abfrage
+ * Holt die letzten 10 Transaktionen eines Users für den Button "Transaktionsverlauf".
+ */
+export async function getTransactionHistory(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(10);
+        
+        if (error) throw error;
+        return data || [];
+    } catch (err) {
+        logger.error("Fehler beim Abrufen der Historie:", err);
+        return [];
+    }
+}
+
+/**
+ * Dynamische Leaderboard-Abfrage.
  */
 export async function getFilteredLeaderboard(filterType) {
     try {
@@ -135,11 +123,20 @@ export async function getFilteredLeaderboard(filterType) {
 }
 
 /**
- * Loggt jede Transaktion für die Historie
+ * Holt den aktuellen Stand des globalen Wirtschafts-Topfs.
  */
-export async function logTransaction(userId, type, amount, description) {
-    const { error } = await supabase.from('transactions').insert({
-        user_id: userId, type, amount, description
-    });
-    if (error) logger.error("Transaktions-Log fehlgeschlagen", error);
+export async function getGlobalEconomy() {
+    try {
+        const { data, error } = await supabase
+            .from('global_economy')
+            .select('tax_pool')
+            .eq('id', 1)
+            .single();
+        
+        if (error) throw error;
+        return data?.tax_pool || 0;
+    } catch (err) {
+        logger.error("Fehler beim Abrufen der Global Economy:", err);
+        return 0;
+    }
 }
