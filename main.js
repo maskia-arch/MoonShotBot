@@ -1,5 +1,6 @@
 // main.js
 import { Telegraf, session } from 'telegraf';
+import http from 'http'; // Für den Render Health-Check
 import { CONFIG } from './config.js';
 import { logger } from './utils/logger.js';
 import { supabase } from './supabase/client.js';
@@ -12,7 +13,12 @@ import { startGlobalScheduler } from './core/scheduler.js';
 import { getVersion } from './utils/versionLoader.js';
 
 // 1. Bot-Instanz erstellen
-const bot = new Telegraf(CONFIG.BOT_TOKEN); // Nutzt CONFIG.BOT_TOKEN aus deiner config.js
+// WICHTIG: In deiner config.js heißt es TELEGRAM_TOKEN
+if (!CONFIG.TELEGRAM_TOKEN) {
+    logger.error("BOT_TOKEN fehlt in den Environment Variables!");
+    process.exit(1);
+}
+const bot = new Telegraf(CONFIG.TELEGRAM_TOKEN);
 
 // 2. Middleware & Session-Setup
 bot.use(session());
@@ -46,7 +52,6 @@ bot.on('callback_query', async (ctx) => {
     if (action === 'rank_profit') return showLeaderboard(ctx, 'profit');
     if (action === 'rank_loser') return showLeaderboard(ctx, 'loser');
 
-    // Hier kommen später weitere Handler für trade_long, buy_immo etc.
     await ctx.answerCbQuery();
 });
 
@@ -64,14 +69,13 @@ async function launch() {
         // Bot starten
         await bot.launch();
         
-        // --- DER HERZSCHLAG ---
         // Startet Mieten, Kurse & Events
         startGlobalScheduler(bot);
 
         console.log(`
         ----------------------------------
         🚀 MoonShot Tycoon ist ONLINE (${version})
-        Status: Alle Systeme (Economy, Trade, DB) aktiv.
+        Status: Alle Systeme aktiv.
         ----------------------------------
         `);
     } catch (err) {
@@ -80,8 +84,18 @@ async function launch() {
     }
 }
 
+// 7. Render Keep-Alive Server (Health Check)
+// Dies verhindert, dass Render den Port-Error wirft
+const port = CONFIG.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('MoonShot Tycoon Bot is running...');
+}).listen(port, () => {
+    logger.info(`🌐 Health-Check Server läuft auf Port ${port}`);
+});
+
 launch();
 
-// Graceful stop
+// Enable graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

@@ -1,12 +1,25 @@
 // ui/layouts.js
-import { 
-    renderHeader, 
-    renderBalanceSnippet, 
-    renderFooter, 
-    divider, 
-    renderImmoCard 
-} from './components.js';
 import { formatCurrency, formatPercent } from '../utils/formatter.js';
+
+// --- BASIS KOMPONENTEN (Direkt hier definiert, um Import-Fehler zu vermeiden) ---
+export const divider = "----------------------------------";
+
+export const renderHeader = (title) => `🏆 **${title.toUpperCase()}**`;
+
+export const renderFooter = () => `\n🎮 _MoonShot Tycoon v1.0_`;
+
+export const renderBalanceSnippet = (balance) => `Kontostand: \`${formatCurrency(balance)}\``;
+
+/**
+ * Hilfsfunktion für Zustandsbalken (Immobilien)
+ */
+const formatProgressBar = (value) => {
+    const total = 5;
+    const filled = Math.round((value / 100) * total);
+    return '🟩'.repeat(filled) + '⬜'.repeat(total - filled) + ` ${value}%`;
+};
+
+// --- LAYOUTS ---
 
 /**
  * Der atmosphärische Einstieg: Onkel Willis Brief
