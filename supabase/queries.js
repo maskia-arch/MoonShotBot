@@ -5,18 +5,16 @@ import { logger } from '../utils/logger.js';
 
 /**
  * Synchronisiert den User beim Start.
- * Erstellt Profil und Season-Stats, falls sie noch nicht existieren.
  */
 export async function syncUser(id, username) {
     try {
         const { data: profile, error: pError } = await supabase
             .from('profiles')
-            .upsert({ id, username, balance: CONFIG.INITIAL_CASH }, { onConflict: 'id' })
+            .upsert({ id, username }, { onConflict: 'id' }) // INITIAL_CASH nur beim ersten Mal setzen via DB-Default oder Logic
             .select().single();
 
         if (pError) throw pError;
         
-        // Initialisiere Season Stats (WICHTIG für das neue Ranking)
         await supabase.from('season_stats').upsert({ user_id: id }, { onConflict: 'user_id' });
         
         return profile;
@@ -45,10 +43,57 @@ export async function getUserProfile(id) {
 }
 
 /**
+ * ZENTRALE FUNKTION: Aktualisiert den Krypto-Bestand (Kauf/Verkauf)
+ * @param {string} userId - ID des Users
+ * @param {string} coinId - ID des Coins (z.B. bitcoin)
+ * @param {number} amountChange - Positive Zahl für Kauf, negative für Verkauf
+ * @param {number} currentPrice - Aktueller Kurs für den Durchschnittspreis
+ */
+export async function updateCryptoHolding(userId, coinId, amountChange, currentPrice) {
+    try {
+        // Vorhandenen Bestand prüfen
+        const { data: current } = await supabase
+            .from('user_crypto')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('coin_id', coinId)
+            .single();
+
+        if (current) {
+            const newAmount = current.amount + amountChange;
+            
+            if (newAmount <= 0) {
+                // Alles verkauft -> Eintrag löschen
+                return await supabase.from('user_crypto').delete().eq('id', current.id);
+            } else {
+                // Bestand aktualisieren
+                // Bei Kauf wird der Durchschnittspreis (avg_buy_price) gewichtet neu berechnet
+                let newAvgPrice = current.avg_buy_price;
+                if (amountChange > 0) {
+                    newAvgPrice = ((current.amount * current.avg_buy_price) + (amountChange * currentPrice)) / newAmount;
+                }
+
+                return await supabase.from('user_crypto')
+                    .update({ amount: newAmount, avg_buy_price: newAvgPrice })
+                    .eq('id', current.id);
+            }
+        } else if (amountChange > 0) {
+            // Neuer Coin-Eintrag (Erster Kauf)
+            return await supabase.from('user_crypto').insert({
+                user_id: userId,
+                coin_id: coinId,
+                amount: amountChange,
+                avg_buy_price: currentPrice
+            });
+        }
+    } catch (err) {
+        logger.error("Fehler bei updateCryptoHolding:", err);
+        throw err;
+    }
+}
+
+/**
  * Verbucht einen Trade und aktualisiert die Season-Performance
- * @param {number} userId - ID des Users
- * @param {number} amount - Der investierte Betrag
- * @param {number} pnl - Profit oder Loss aus diesem Trade (bei Verkauf)
  */
 export async function updateTradeStats(userId, amount, pnl = 0) {
     try {
@@ -67,7 +112,7 @@ export async function updateTradeStats(userId, amount, pnl = 0) {
 }
 
 /**
- * Dynamische Leaderboard-Abfrage je nach Filter
+ * Dynamische Leaderboard-Abfrage
  */
 export async function getFilteredLeaderboard(filterType) {
     try {
