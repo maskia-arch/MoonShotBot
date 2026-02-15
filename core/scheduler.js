@@ -2,34 +2,38 @@
 import { runEconomyTick } from '../logic/economy.js';
 import { updateMarketPrices } from '../logic/market.js';
 import { triggerRandomMarketEvent } from '../logic/events.js';
-import { checkLiquidations } from '../logic/liquidation.js'; // NEU
+import { checkLiquidations } from '../logic/liquidation.js';
 import { logger } from '../utils/logger.js';
 import { CONFIG } from '../config.js';
 
 /**
  * Der Scheduler ist der Herzschlag des Bots.
+ * Optimiert für minütliche Krypto-Updates und Single-Message-Interface.
  */
 export function startGlobalScheduler(bot) {
     logger.info("🕒 Globaler Scheduler wird initialisiert...");
 
-    // 1. KRYPTO-PREIS-TICK & LIQUIDATION (Alle 5 Minuten)
+    // 1. KRYPTO-PREIS-TICK & LIQUIDATION (Alle 60 Sekunden)
+    // Damit Spieler immer die aktuellsten Kurse sehen
     setInterval(async () => {
         try {
-            // Erst Preise aktualisieren...
+            // Preise sofort aktualisieren
             await updateMarketPrices();
-            logger.debug("Markt-Cache automatisch aktualisiert.");
             
-            // ...dann sofort prüfen, ob jemand "rekt" gegangen ist
+            // Sofort prüfen, ob Hebel-Positionen liquidiert werden müssen
             await checkLiquidations(bot); 
+            
+            logger.debug("⚡ Minütlicher Krypto-Tick erfolgreich.");
         } catch (err) {
-            logger.error("Fehler im Preis/Liquidation-Tick:", err);
+            logger.error("Fehler im 60s Krypto-Tick:", err);
         }
-    }, 5 * 60 * 1000);
+    }, 60000); // 60.000ms = 1 Minute
 
-    // 2. WIRTSCHAFTS-TICK (Jede Stunde)
+    // 2. WIRTSCHAFTS-TICK (Intervall aus CONFIG, z.B. jede Stunde)
+    // Verarbeitet Mieteinnahmen, Instandhaltung und Events
     setInterval(async () => {
         try {
-            logger.info("--- START WIRTSCHAFTS-TICK ---");
+            logger.info("--- START WIRTSCHAFTS-TICK (Stündlich) ---");
             await runEconomyTick();
             await triggerRandomMarketEvent(bot);
             logger.info("--- TICK ERFOLGREICH BEENDET ---");
@@ -38,9 +42,14 @@ export function startGlobalScheduler(bot) {
         }
     }, CONFIG.TICK_SPEED_MS);
 
-    // 3. SEASON-CHECK (Einmal täglich)
+    // 3. SEASON-CHECK & MAINTENANCE (Einmal täglich)
     setInterval(async () => {
-        await checkSeasonEnd(bot);
+        try {
+            await checkSeasonEnd(bot);
+            logger.debug("Täglicher System-Check durchgeführt.");
+        } catch (err) {
+            logger.error("Fehler im Daily-Check:", err);
+        }
     }, 24 * 60 * 60 * 1000);
 }
 
@@ -48,10 +57,13 @@ export function startGlobalScheduler(bot) {
  * Prüft das Enddatum der Season
  */
 async function checkSeasonEnd(bot) {
-    // Hier kannst du später ein festes Datum aus der CONFIG prüfen
-    logger.debug("Season-Check durchgeführt.");
+    // Hier wird später die Season-Logik implementiert
+    logger.debug("Season-End-Check läuft...");
 }
 
+/**
+ * Setzt die Statistiken für eine neue Season zurück
+ */
 export async function resetSeasonStats() {
     try {
         const { error } = await supabase

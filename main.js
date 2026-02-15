@@ -5,7 +5,7 @@ import { CONFIG } from './config.js';
 import { logger } from './utils/logger.js';
 import { supabase } from './supabase/client.js';
 import { handleStart } from './commands/start.js';
-import { showTradeMenu, handleBuy, handleSell } from './commands/trade.js'; // Imports erweitert
+import { showTradeMenu, handleBuy, handleSell } from './commands/trade.js';
 import { showImmoMarket } from './commands/immo.js';
 import { showWallet } from './commands/wallet.js';
 import { showLeaderboard } from './commands/rank.js';
@@ -23,20 +23,29 @@ const bot = new Telegraf(CONFIG.TELEGRAM_TOKEN);
 bot.use(session());
 
 /**
- * OPTIMIERTER INTERFACE HANDLER
- * Sorgt für sauberen Chat durch Löschen/Editieren.
+ * ZENTRALER INTERFACE HANDLER (Single-Message-Prinzip)
+ * Versucht immer die letzte Nachricht zu editieren, um Spam zu vermeiden.
  */
 bot.use(async (ctx, next) => {
     ctx.sendInterface = async (text, extra = {}) => {
-        if (ctx.callbackQuery) {
+        const lastId = ctx.session?.lastMessageId;
+
+        // 1. VERSUCH: Bestehende Nachricht editieren
+        if (lastId) {
             try {
-                return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
-            } catch (e) {}
+                return await ctx.telegram.editMessageText(ctx.chat.id, lastId, null, text, {
+                    parse_mode: 'Markdown',
+                    ...extra
+                });
+            } catch (e) {
+                // Falls Editieren fehlschlägt (z.B. Nachricht zu alt), senden wir neu
+            }
         }
 
-        if (ctx.session?.lastMessageId) {
+        // 2. FALLBACK: Neu senden und alte Nachricht falls möglich löschen
+        if (lastId) {
             try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId).catch(() => {});
+                await ctx.telegram.deleteMessage(ctx.chat.id, lastId).catch(() => {});
             } catch (e) {}
         }
 
@@ -51,77 +60,76 @@ bot.use(async (ctx, next) => {
     await next();
 });
 
-// --- NEU: HANDLER FÜR MENGEN-EINGABEN (AUTO-DELETE) ---
+/**
+ * HANDLER FÜR MENGEN-EINGABEN (AUTO-DELETE)
+ * Verarbeitet Zahleneingaben für Trades und löscht User-Nachrichten sofort.
+ */
 bot.on('text', async (ctx, next) => {
-    // Falls kein aktiver Trade-Status in der Session, normal weiter
-    if (!ctx.session?.activeTrade) return next();
+    // Falls kein aktiver Trade-Status oder System-Befehl, normal weiter
+    if (!ctx.session?.activeTrade || ctx.message.text.startsWith('/')) return next();
 
     const amount = parseFloat(ctx.message.text.replace(',', '.'));
     const { coinId, type } = ctx.session.activeTrade;
 
-    // 1. User-Nachricht sofort löschen (für Immersion)
+    // User-Nachricht sofort löschen für Immersion
     try {
         await ctx.deleteMessage().catch(() => {});
     } catch (e) {}
 
-    // 2. Validierung
     if (isNaN(amount) || amount <= 0) {
-        // Wir senden eine temporäre Warnung über das Interface
-        return ctx.sendInterface(`⚠️ **Fehler:** Bitte gib eine gültige Zahl für ${coinId.toUpperCase()} ein.`);
+        return ctx.sendInterface(`⚠️ **Fehler:** Bitte gib eine gültige Anzahl für ${coinId.toUpperCase()} ein.`);
     }
 
-    // 3. Trade ausführen
+    // Trade ausführen und Status danach löschen
     if (type === 'buy') {
         await handleBuy(ctx, coinId, amount);
     } else if (type === 'sell') {
         await handleSell(ctx, coinId, amount);
     }
-
-    // 4. Status löschen, damit normale Nachrichten wieder durchgehen
+    
     delete ctx.session.activeTrade;
 });
 
 bot.catch((err, ctx) => {
-    if (err.description?.includes("message to delete not found")) return;
+    if (err.description?.includes("message to delete not found") || err.description?.includes("message is not modified")) return;
     logger.error(`Kritischer Fehler:`, err);
 });
 
-// 4. Befehle & Handler
+// --- BEFEHLE & HANDLER ---
 bot.command('start', (ctx) => handleStart(ctx));
 
 bot.hears('📈 Trading Center', async (ctx) => {
-    await ctx.sendInterface("⌛ Lade Live-Kurse..."); 
+    // Nachricht des Users löschen (für sauberen Chat)
+    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
     return showTradeMenu(ctx);
 });
 
-bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
-
 bot.hears('💰 Mein Portfolio', async (ctx) => {
-    await ctx.sendInterface("⌛ Öffne Portfolio...");
+    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
     return showWallet(ctx);
 });
 
-bot.hears('🏆 Bestenliste', (ctx) => showLeaderboard(ctx, 'wealth'));
+bot.hears('🏠 Immobilien', async (ctx) => {
+    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
+    return showImmoMarket(ctx);
+});
 
-// 5. Callback-Query Handler
+bot.hears('🏆 Bestenliste', async (ctx) => {
+    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
+    return showLeaderboard(ctx, 'wealth');
+});
+
+// --- CALLBACK QUERIES ---
 bot.on('callback_query', async (ctx) => {
     const action = ctx.callbackQuery.data;
     
     if (action === 'open_trading_center') return showTradeMenu(ctx);
-    
-    if (action.startsWith('view_coin_')) {
-        return showTradeMenu(ctx, action.split('_')[2]);
-    }
+    if (action.startsWith('view_coin_')) return showTradeMenu(ctx, action.split('_')[2]);
 
-    // NEU: Diese Callbacks triggern den Eingabe-Modus in trade.js
-    if (action.startsWith('trade_buy_')) {
+    if (action.startsWith('trade_buy_') || action.startsWith('trade_sell_')) {
+        const parts = action.split('_');
         const { initiateTradeInput } = await import('./commands/trade.js');
-        return initiateTradeInput(ctx, action.split('_')[2], 'buy');
-    }
-    
-    if (action.startsWith('trade_sell_')) {
-        const { initiateTradeInput } = await import('./commands/trade.js');
-        return initiateTradeInput(ctx, action.split('_')[2], 'sell');
+        return initiateTradeInput(ctx, parts[2], parts[1]);
     }
 
     if (action === 'main_menu') {
@@ -135,13 +143,14 @@ bot.on('callback_query', async (ctx) => {
     } catch (e) {}
 });
 
-// 6. Startvorgang
+// --- LAUNCH ---
 async function launch() {
     try {
         const version = getVersion();
         await bot.launch();
 
-        logger.info("Starte initialen Marktdaten-Abruf...");
+        // INITIALER FETCH: Erzwingt Marktdaten beim Start
+        logger.info("Lade initiale Marktdaten...");
         await updateMarketPrices().catch(e => logger.error("Erster Fetch fehlgeschlagen", e));
 
         startGlobalScheduler(bot);
