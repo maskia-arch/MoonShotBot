@@ -6,6 +6,10 @@ import { logger } from '../utils/logger.js';
 let priceCache = {};
 let lastFetch = 0;
 
+/**
+ * Kern-Logik: Holt Daten von CoinGecko und schreibt sie in den Cache.
+ * Wird vom Scheduler jede Minute aufgerufen.
+ */
 export async function updateMarketPrices() {
     const now = Date.now();
     try {
@@ -17,6 +21,7 @@ export async function updateMarketPrices() {
         
         const data = await response.json();
         const formattedData = {};
+        
         for (const [id, values] of Object.entries(data)) {
             formattedData[id] = {
                 price: values.eur,
@@ -26,25 +31,36 @@ export async function updateMarketPrices() {
 
         priceCache = formattedData;
         lastFetch = now;
+        logger.debug("Markt-Cache erfolgreich aktualisiert.");
         return priceCache;
     } catch (err) {
-        logger.error("API Fehler:", err);
+        logger.error("API Fehler bei Marktdaten-Update:", err.message);
+        // Gib den alten Cache zurück, um System-Hänger zu vermeiden
         return priceCache; 
     }
 }
 
-// Sofort-Export des Caches für blitzschnelle Anzeige
+/**
+ * Schnittstelle für den Rest des Bots: Liefert sofort die Daten aus dem Speicher.
+ */
 export async function getMarketData() {
+    // Falls der Cache beim allerersten Start noch komplett leer ist, kurz warten/holen
     if (Object.keys(priceCache).length === 0) {
         await updateMarketPrices();
     }
     return priceCache;
 }
 
+/**
+ * Bequemlichkeits-Funktion für einen einzelnen Coin
+ */
 export async function getCoinPrice(coinId) {
     const prices = await getMarketData();
     return prices[coinId.toLowerCase()] || null;
 }
 
-// INITIALER FETCH BEIM SERVERSTART (Erzwingt Daten vor dem ersten Klick)
-updateMarketPrices(); 
+/**
+ * INITIALER FETCH: Erzwingt Daten beim Laden des Moduls (Serverstart).
+ * Dies verhindert die "Bitte warten"-Nachricht beim ersten User-Klick.
+ */
+updateMarketPrices().catch(err => logger.error("Erster Marktdaten-Fetch fehlgeschlagen:", err));

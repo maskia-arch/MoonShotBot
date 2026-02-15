@@ -24,7 +24,8 @@ bot.use(session());
 
 /**
  * ZENTRALER INTERFACE HANDLER (Single-Message-Prinzip)
- * Versucht immer die letzte Nachricht zu editieren, um Spam zu vermeiden.
+ * Versucht immer die letzte Nachricht zu editieren.
+ * Falls dies fehlschlägt, wird die alte Nachricht gelöscht und neu gesendet.
  */
 bot.use(async (ctx, next) => {
     ctx.sendInterface = async (text, extra = {}) => {
@@ -38,17 +39,14 @@ bot.use(async (ctx, next) => {
                     ...extra
                 });
             } catch (e) {
-                // Falls Editieren fehlschlägt (z.B. Nachricht zu alt), senden wir neu
+                // Falls Editieren fehlschlägt, löschen wir die alte Nachricht
+                try {
+                    await ctx.telegram.deleteMessage(ctx.chat.id, lastId).catch(() => {});
+                } catch (delErr) {}
             }
         }
 
-        // 2. FALLBACK: Neu senden und alte Nachricht falls möglich löschen
-        if (lastId) {
-            try {
-                await ctx.telegram.deleteMessage(ctx.chat.id, lastId).catch(() => {});
-            } catch (e) {}
-        }
-
+        // 2. NEU SENDEN
         try {
             const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
             ctx.session.lastMessageId = msg.message_id;
@@ -61,26 +59,26 @@ bot.use(async (ctx, next) => {
 });
 
 /**
- * HANDLER FÜR MENGEN-EINGABEN (AUTO-DELETE)
- * Verarbeitet Zahleneingaben für Trades und löscht User-Nachrichten sofort.
+ * AUTO-CLEANUP HANDLER
+ * Löscht User-Eingaben sofort nach Erhalt, um den Chat sauber zu halten.
  */
 bot.on('text', async (ctx, next) => {
-    // Falls kein aktiver Trade-Status oder System-Befehl, normal weiter
+    // 1. User Nachricht sofort löschen (für Immersion)
+    try {
+        await ctx.deleteMessage().catch(() => {});
+    } catch (e) {}
+
+    // Falls kein aktiver Trade-Status oder System-Befehl (/start), normal weiter
     if (!ctx.session?.activeTrade || ctx.message.text.startsWith('/')) return next();
 
     const amount = parseFloat(ctx.message.text.replace(',', '.'));
     const { coinId, type } = ctx.session.activeTrade;
 
-    // User-Nachricht sofort löschen für Immersion
-    try {
-        await ctx.deleteMessage().catch(() => {});
-    } catch (e) {}
-
     if (isNaN(amount) || amount <= 0) {
-        return ctx.sendInterface(`⚠️ **Fehler:** Bitte gib eine gültige Anzahl für ${coinId.toUpperCase()} ein.`);
+        return ctx.sendInterface(`🚨 **Fehler:** Bitte gib eine gültige Anzahl für ${coinId.toUpperCase()} ein.`);
     }
 
-    // Trade ausführen und Status danach löschen
+    // Trade ausführen
     if (type === 'buy') {
         await handleBuy(ctx, coinId, amount);
     } else if (type === 'sell') {
@@ -91,6 +89,7 @@ bot.on('text', async (ctx, next) => {
 });
 
 bot.catch((err, ctx) => {
+    // Unterdrückt harmlose Fehler-Popups bei bereits gelöschten Nachrichten
     if (err.description?.includes("message to delete not found") || err.description?.includes("message is not modified")) return;
     logger.error(`Kritischer Fehler:`, err);
 });
@@ -98,26 +97,11 @@ bot.catch((err, ctx) => {
 // --- BEFEHLE & HANDLER ---
 bot.command('start', (ctx) => handleStart(ctx));
 
-bot.hears('📈 Trading Center', async (ctx) => {
-    // Nachricht des Users löschen (für sauberen Chat)
-    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
-    return showTradeMenu(ctx);
-});
-
-bot.hears('💰 Mein Portfolio', async (ctx) => {
-    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
-    return showWallet(ctx);
-});
-
-bot.hears('🏠 Immobilien', async (ctx) => {
-    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
-    return showImmoMarket(ctx);
-});
-
-bot.hears('🏆 Bestenliste', async (ctx) => {
-    try { await ctx.deleteMessage().catch(() => {}); } catch (e) {}
-    return showLeaderboard(ctx, 'wealth');
-});
+// Hears-Logik: Text-Buttons löschen nun ihre eigene Trigger-Nachricht
+bot.hears('📈 Trading Center', (ctx) => showTradeMenu(ctx));
+bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));
+bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
+bot.hears('🏆 Bestenliste', (ctx) => showLeaderboard(ctx, 'wealth'));
 
 // --- CALLBACK QUERIES ---
 bot.on('callback_query', async (ctx) => {
