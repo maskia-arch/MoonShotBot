@@ -80,6 +80,33 @@ export async function logTransaction(userId, type, amount, description) {
 }
 
 /**
+ * FIX: Diese Funktion wurde vom Trade-Modul angefordert, fehlte aber.
+ * Aktualisiert Statistiken oder das Handelsvolumen.
+ */
+export async function updateTradeStats(userId, volumeAmount, pnl = 0) {
+    try {
+        // Erhöht das Handelsvolumen im Profil
+        const { error } = await supabase.rpc('add_trading_volume', { 
+            p_user_id: userId, 
+            p_volume: volumeAmount 
+        });
+        
+        if (error) throw error;
+
+        // Falls PnL (Profit/Loss) übergeben wurde, Season Stats updaten
+        if (pnl !== 0) {
+            const rpcFunc = pnl > 0 ? 'update_season_profit' : 'update_season_loss';
+            await supabase.rpc(rpcFunc, { 
+                p_user_id: userId, 
+                pnl_amount: Math.abs(pnl) 
+            });
+        }
+    } catch (err) {
+        logger.error("Fehler beim Update der Trade-Stats:", err);
+    }
+}
+
+/**
  * Holt die letzten 10 Transaktionen eines Users für den Button "Transaktionsverlauf".
  */
 export async function getTransactionHistory(userId) {
