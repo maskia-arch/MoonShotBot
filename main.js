@@ -24,10 +24,14 @@ bot.use(session());
 
 /**
  * ZENTRALER INTERFACE HANDLER (Single-Message-Prinzip)
- * Versucht immer die letzte Nachricht zu editieren.
- * Falls dies fehlschlägt, wird die alte Nachricht gelöscht und neu gesendet.
+ * Fix: Initialisiert ctx.session, falls sie undefined ist.
  */
 bot.use(async (ctx, next) => {
+    // KRITISCH: Verhindert den "undefined" Fehler beim Zugriff auf lastMessageId
+    if (ctx.from && !ctx.session) {
+        ctx.session = {};
+    }
+
     ctx.sendInterface = async (text, extra = {}) => {
         const lastId = ctx.session?.lastMessageId;
 
@@ -60,15 +64,14 @@ bot.use(async (ctx, next) => {
 
 /**
  * AUTO-CLEANUP HANDLER
- * Löscht User-Eingaben sofort nach Erhalt, um den Chat sauber zu halten.
+ * Löscht User-Eingaben sofort nach Erhalt.
  */
 bot.on('text', async (ctx, next) => {
-    // 1. User Nachricht sofort löschen (für Immersion)
+    // User Nachricht sofort löschen
     try {
         await ctx.deleteMessage().catch(() => {});
     } catch (e) {}
 
-    // Falls kein aktiver Trade-Status oder System-Befehl (/start), normal weiter
     if (!ctx.session?.activeTrade || ctx.message.text.startsWith('/')) return next();
 
     const amount = parseFloat(ctx.message.text.replace(',', '.'));
@@ -78,7 +81,6 @@ bot.on('text', async (ctx, next) => {
         return ctx.sendInterface(`🚨 **Fehler:** Bitte gib eine gültige Anzahl für ${coinId.toUpperCase()} ein.`);
     }
 
-    // Trade ausführen
     if (type === 'buy') {
         await handleBuy(ctx, coinId, amount);
     } else if (type === 'sell') {
@@ -89,7 +91,6 @@ bot.on('text', async (ctx, next) => {
 });
 
 bot.catch((err, ctx) => {
-    // Unterdrückt harmlose Fehler-Popups bei bereits gelöschten Nachrichten
     if (err.description?.includes("message to delete not found") || err.description?.includes("message is not modified")) return;
     logger.error(`Kritischer Fehler:`, err);
 });
@@ -97,7 +98,6 @@ bot.catch((err, ctx) => {
 // --- BEFEHLE & HANDLER ---
 bot.command('start', (ctx) => handleStart(ctx));
 
-// Hears-Logik: Text-Buttons löschen nun ihre eigene Trigger-Nachricht
 bot.hears('📈 Trading Center', (ctx) => showTradeMenu(ctx));
 bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));
 bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
@@ -127,14 +127,13 @@ bot.on('callback_query', async (ctx) => {
     } catch (e) {}
 });
 
-// --- LAUNCH ---
 async function launch() {
     try {
         const version = getVersion();
         await bot.launch();
 
-        // INITIALER FETCH: Erzwingt Marktdaten beim Start
         logger.info("Lade initiale Marktdaten...");
+        // updateMarketPrices wird durch das neue market.js-Modul mit Fallbacks abgesichert
         await updateMarketPrices().catch(e => logger.error("Erster Fetch fehlgeschlagen", e));
 
         startGlobalScheduler(bot);

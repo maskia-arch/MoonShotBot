@@ -3,12 +3,18 @@ import fetch from 'node-fetch';
 import { CONFIG } from '../config.js';
 import { logger } from '../utils/logger.js';
 
-let priceCache = {};
+// --- NEU: FALLBACK-DATEN (Verhindert Start-Hänger bei API-Sperre) ---
+const FALLBACK_PRICES = {
+    bitcoin: { price: 62450.00, change24h: 1.2 },
+    litecoin: { price: 92.45, change24h: -0.5 }
+};
+
+// Initialisiere den Cache direkt mit Fallbacks, damit der Bot nie leer startet
+let priceCache = { ...FALLBACK_PRICES }; 
 let lastFetch = 0;
 
 /**
  * Kern-Logik: Holt Daten von CoinGecko und schreibt sie in den Cache.
- * Wird vom Scheduler jede Minute aufgerufen.
  */
 export async function updateMarketPrices() {
     const now = Date.now();
@@ -17,6 +23,13 @@ export async function updateMarketPrices() {
         const url = `${CONFIG.COINGECKO_BASE_URL}/simple/price?ids=${ids}&vs_currencies=eur&include_24hr_change=true`;
 
         const response = await fetch(url);
+
+        // Spezielle Behandlung für Rate-Limits (Error 429) aus deinen Logs
+        if (response.status === 429) {
+            logger.warn("⚠️ CoinGecko Rate Limit (429). Nutze vorhandenen Cache/Fallbacks.");
+            return priceCache;
+        }
+
         if (!response.ok) throw new Error(`API Status: ${response.status}`);
         
         const data = await response.json();
@@ -34,20 +47,17 @@ export async function updateMarketPrices() {
         logger.debug("Markt-Cache erfolgreich aktualisiert.");
         return priceCache;
     } catch (err) {
-        logger.error("API Fehler bei Marktdaten-Update:", err.message);
-        // Gib den alten Cache zurück, um System-Hänger zu vermeiden
+        // Bei jedem Fehler (Timeout, API-Down, DNS) nutzen wir den Cache weiter
+        logger.error(`API Fehler: ${err.message}. System läuft mit Cache weiter.`);
         return priceCache; 
     }
 }
 
 /**
- * Schnittstelle für den Rest des Bots: Liefert sofort die Daten aus dem Speicher.
+ * Schnittstelle: Liefert sofort Daten aus dem Speicher (Keine Wartezeit!)
  */
 export async function getMarketData() {
-    // Falls der Cache beim allerersten Start noch komplett leer ist, kurz warten/holen
-    if (Object.keys(priceCache).length === 0) {
-        await updateMarketPrices();
-    }
+    // Falls die API noch nie erreicht wurde, haben wir dank Initialisierung die Fallbacks
     return priceCache;
 }
 
@@ -56,11 +66,12 @@ export async function getMarketData() {
  */
 export async function getCoinPrice(coinId) {
     const prices = await getMarketData();
-    return prices[coinId.toLowerCase()] || null;
+    const id = coinId.toLowerCase();
+    // Falls Coin nicht im Cache, nutze Fallback-Preis
+    return prices[id] || FALLBACK_PRICES[id] || null;
 }
 
 /**
  * INITIALER FETCH: Erzwingt Daten beim Laden des Moduls (Serverstart).
- * Dies verhindert die "Bitte warten"-Nachricht beim ersten User-Klick.
  */
 updateMarketPrices().catch(err => logger.error("Erster Marktdaten-Fetch fehlgeschlagen:", err));
