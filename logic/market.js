@@ -1,77 +1,87 @@
 // logic/market.js
 import fetch from 'node-fetch';
-import { CONFIG } from '../config.js';
+import { supabase } from '../supabase/client.js';
 import { logger } from '../utils/logger.js';
 
-// --- NEU: FALLBACK-DATEN (Verhindert Start-Hänger bei API-Sperre) ---
+// Realistischere Fallbacks für den absoluten Notfall
 const FALLBACK_PRICES = {
-    bitcoin: { price: 62450.00, change24h: 1.2 },
-    litecoin: { price: 92.45, change24h: -0.5 }
+    bitcoin: { price: 61500.00, change24h: 0.5 },
+    litecoin: { price: 41.20, change24h: -0.2 }
 };
 
-// Initialisiere den Cache direkt mit Fallbacks, damit der Bot nie leer startet
-let priceCache = { ...FALLBACK_PRICES }; 
-let lastFetch = 0;
-
 /**
- * Kern-Logik: Holt Daten von CoinGecko und schreibt sie in den Cache.
+ * Holt aktuelle Kurse von CryptoCompare (stabilere Alternative zu CoinGecko)
+ * und speichert sie zentral in der Supabase-Datenbank.
  */
 export async function updateMarketPrices() {
-    const now = Date.now();
     try {
-        const ids = CONFIG.SUPPORTED_COINS.join(',');
-        const url = `${CONFIG.COINGECKO_BASE_URL}/simple/price?ids=${ids}&vs_currencies=eur&include_24hr_change=true`;
-
+        // CryptoCompare Preis-Abfrage für BTC und LTC in EUR
+        const url = `https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC,LTC&tsyms=EUR`;
+        
         const response = await fetch(url);
-
-        // Spezielle Behandlung für Rate-Limits (Error 429) aus deinen Logs
-        if (response.status === 429) {
-            logger.warn("⚠️ CoinGecko Rate Limit (429). Nutze vorhandenen Cache/Fallbacks.");
-            return priceCache;
-        }
-
-        if (!response.ok) throw new Error(`API Status: ${response.status}`);
-        
         const data = await response.json();
-        const formattedData = {};
-        
-        for (const [id, values] of Object.entries(data)) {
-            formattedData[id] = {
-                price: values.eur,
-                change24h: values.eur_24h_change
-            };
+
+        if (!data.RAW) {
+            throw new Error("API-Limit erreicht oder ungültige Antwort");
         }
 
-        priceCache = formattedData;
-        lastFetch = now;
-        logger.debug("Markt-Cache erfolgreich aktualisiert.");
-        return priceCache;
+        const updates = [
+            { 
+                coin_id: 'bitcoin', 
+                price_eur: data.RAW.BTC.EUR.PRICE, 
+                change_24h: data.RAW.BTC.EUR.CHANGEPCT24HOUR,
+                last_update: new Date()
+            },
+            { 
+                coin_id: 'litecoin', 
+                price_eur: data.RAW.LTC.EUR.PRICE, 
+                change_24h: data.RAW.LTC.EUR.CHANGEPCT24HOUR,
+                last_update: new Date()
+            }
+        ];
+
+        // Die Preise in den Supabase market_cache schreiben
+        const { error } = await supabase.from('market_cache').upsert(updates);
+        if (error) throw error;
+
+        logger.debug("✅ Markt-DB via CryptoCompare aktualisiert.");
     } catch (err) {
-        // Bei jedem Fehler (Timeout, API-Down, DNS) nutzen wir den Cache weiter
-        logger.error(`API Fehler: ${err.message}. System läuft mit Cache weiter.`);
-        return priceCache; 
+        logger.error(`❌ Markt-Update fehlgeschlagen: ${err.message}`);
     }
 }
 
 /**
- * Schnittstelle: Liefert sofort Daten aus dem Speicher (Keine Wartezeit!)
+ * Holt die Daten blitzschnell aus der Datenbank statt von der API.
  */
 export async function getMarketData() {
-    // Falls die API noch nie erreicht wurde, haben wir dank Initialisierung die Fallbacks
-    return priceCache;
+    try {
+        const { data, error } = await supabase.from('market_cache').select('*');
+        
+        if (error || !data || data.length === 0) {
+            return FALLBACK_PRICES;
+        }
+
+        const formatted = {};
+        data.forEach(row => {
+            formatted[row.coin_id] = { 
+                price: parseFloat(row.price_eur), 
+                change24h: parseFloat(row.change_24h) 
+            };
+        });
+        return formatted;
+    } catch (err) {
+        return FALLBACK_PRICES;
+    }
 }
 
 /**
- * Bequemlichkeits-Funktion für einen einzelnen Coin
+ * Bequemlichkeits-Funktion für einen einzelnen Preis
  */
 export async function getCoinPrice(coinId) {
-    const prices = await getMarketData();
+    const market = await getMarketData();
     const id = coinId.toLowerCase();
-    // Falls Coin nicht im Cache, nutze Fallback-Preis
-    return prices[id] || FALLBACK_PRICES[id] || null;
+    return market[id] || FALLBACK_PRICES[id];
 }
 
-/**
- * INITIALER FETCH: Erzwingt Daten beim Laden des Moduls (Serverstart).
- */
-updateMarketPrices().catch(err => logger.error("Erster Marktdaten-Fetch fehlgeschlagen:", err));
+// Initialer Aufruf beim Serverstart
+updateMarketPrices().catch(e => logger.error("Initialer Fetch fehlgeschlagen", e));
