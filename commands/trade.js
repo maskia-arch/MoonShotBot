@@ -6,6 +6,7 @@ import { coinListButtons, coinActionButtons } from '../ui/buttons.js';
 import { logger } from '../utils/logger.js';
 import { logTransaction, updateTradeStats } from '../supabase/queries.js';
 import { getTradeCalculations, calculateTrade, isTradeEligibleForVolume } from '../logic/tradeLogic.js';
+import { formatCurrency, formatCrypto } from '../utils/formatter.js';
 import { Markup } from 'telegraf';
 import { CONFIG } from '../config.js';
 
@@ -28,7 +29,8 @@ export async function showTradeMenu(ctx, coinId = null) {
                 const c = marketData[id];
                 const emoji = c.change24h >= 0 ? '🟢' : '🔴';
                 const trend = c.change24h >= 0 ? '+' : '';
-                listMsg += `${emoji} **${id.toUpperCase()}**: \`${c.price.toLocaleString('de-DE')} €\` (${trend}${c.change24h.toFixed(2)}%)\n`;
+                // Korrektur: Währung auf 2 Nachkommastellen via formatCurrency
+                listMsg += `${emoji} **${id.toUpperCase()}**: \`${formatCurrency(c.price)}\` (${trend}${c.change24h.toFixed(2)}%)\n`;
             });
             listMsg += `\n_Wähle einen Coin für Details._`;
             return await ctx.sendInterface(listMsg, coinListButtons(marketData));
@@ -62,22 +64,24 @@ export async function initiateTradeInput(ctx, coinId, type) {
         const marketData = await getMarketData();
         const coin = marketData[coinId.toLowerCase()];
         
+        if (!coin) throw new Error("Coin-Daten fehlen");
+
         const { data: user } = await supabase.from('profiles').select('balance').eq('id', userId).single();
         const { data: asset } = await supabase.from('user_crypto')
-            .select('amount').eq('user_id', userId).eq('coin_id', coinId).single();
+            .select('amount').eq('user_id', userId).eq('coin_id', coinId.toLowerCase()).single();
 
         const userHoldings = asset ? asset.amount : 0;
         const { maxBuy, maxSell } = getTradeCalculations(user.balance, coin.price, userHoldings);
 
-        ctx.session.activeTrade = { coinId, type };
+        ctx.session.activeTrade = { coinId: coinId.toLowerCase(), type };
 
         const actionTitle = type === 'buy' ? '🛒 KAUFEN' : '💰 VERKAUFEN';
         const limitInfo = type === 'buy' 
-            ? `Max. kaufbar: \`${maxBuy}\` ${coinId.toUpperCase()}` 
-            : `Verfügbarer Bestand: \`${maxSell}\` ${coinId.toUpperCase()}`;
+            ? `Max. kaufbar: \`${formatCrypto(maxBuy)}\` ${coinId.toUpperCase()}` 
+            : `Verfügbarer Bestand: \`${formatCrypto(maxSell)}\` ${coinId.toUpperCase()}`;
 
         const inputMsg = `⌨️ **${actionTitle}: ${coinId.toUpperCase()}**\n${divider}\n` +
-                         `Aktueller Kurs: \`${coin.price.toLocaleString('de-DE')} €\`\n` +
+                         `Aktueller Kurs: \`${formatCurrency(coin.price)}\`\n` +
                          `${limitInfo}\n\n` +
                          `_Bitte sende jetzt die gewünschte Anzahl als Nachricht._`;
 
@@ -86,7 +90,7 @@ export async function initiateTradeInput(ctx, coinId, type) {
         ]));
     } catch (err) {
         logger.error("Fehler bei Trade-Initialisierung:", err);
-        ctx.answerCbQuery("🚨 Fehler.");
+        ctx.answerCbQuery("🚨 Fehler beim Starten der Eingabe.");
     }
 }
 
@@ -97,28 +101,26 @@ export async function handleBuy(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
     try {
         const coin = await getCoinPrice(coinId);
-        // Berechnung mit 0,5% Gebühr
-        const { totalCost, fee } = calculateTrade(cryptoAmount, coin.price);
+        if (!coin) throw new Error("Preis nicht verfügbar");
 
+        const { totalCost, fee } = calculateTrade(cryptoAmount, coin.price);
         const { data: user } = await supabase.from('profiles').select('balance').eq('id', userId).single();
+        
         if (user.balance < totalCost) {
-            return ctx.sendInterface(`❌ **Guthaben unzureichend!**\nBedarf: \`${totalCost.toLocaleString('de-DE')} €\``);
+            return ctx.sendInterface(`❌ **Guthaben unzureichend!**\nBedarf: \`${formatCurrency(totalCost)}\``);
         }
 
         const { data: currentAsset } = await supabase.from('user_crypto')
             .select('amount, avg_buy_price')
             .eq('user_id', userId)
-            .eq('coin_id', coinId)
+            .eq('coin_id', coinId.toLowerCase())
             .single();
 
         const oldAmount = currentAsset ? currentAsset.amount : 0;
         const newAmount = oldAmount + cryptoAmount;
-        
-        const oldValue = oldAmount * (currentAsset?.avg_buy_price || 0);
-        const newValue = cryptoAmount * coin.price;
-        const newAvgPrice = (oldValue + newValue) / newAmount;
+        const newAvgPrice = ((oldAmount * (currentAsset?.avg_buy_price || 0)) + (cryptoAmount * coin.price)) / newAmount;
 
-        // DB Update: Balance runter, Gebühr in Topf (via RPC)
+        // DB Updates via RPC (Geld & Steuertopf)
         await supabase.rpc('execute_trade_buy', { 
             p_user_id: userId, 
             p_total_cost: totalCost, 
@@ -127,41 +129,38 @@ export async function handleBuy(ctx, coinId, cryptoAmount) {
         
         await supabase.from('user_crypto').upsert({ 
             user_id: userId, 
-            coin_id: coinId, 
+            coin_id: coinId.toLowerCase(), 
             amount: newAmount, 
             avg_buy_price: newAvgPrice,
-            created_at: new Date(), // Wichtig für 1h-Check
-            leverage: 1 
+            created_at: new Date()
         }, { onConflict: 'user_id,coin_id' });
 
-        // Push Benachrichtigung
-        await ctx.answerCbQuery(`✅ Kauf erfolgreich: ${cryptoAmount} ${coinId.toUpperCase()}`, { show_alert: false });
+        await ctx.answerCbQuery(`✅ Kauf erfolgreich: ${formatCrypto(cryptoAmount)} ${coinId.toUpperCase()}`, { show_alert: false });
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Kauf-Fehler:", err);
+        ctx.answerCbQuery("🚨 Kauf konnte nicht verarbeitet werden.");
     }
 }
 
 /**
- * Verarbeitet den Verkauf (inkl. Haltefrist-Check für Immobilien-Sperre).
+ * Verarbeitet den Verkauf (inkl. Haltefrist-Check).
  */
 export async function handleSell(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
     try {
         const coin = await getCoinPrice(coinId);
         const { data: asset } = await supabase.from('user_crypto')
-            .select('*').eq('user_id', userId).eq('coin_id', coinId).single();
+            .select('*').eq('user_id', userId).eq('coin_id', coinId.toLowerCase()).single();
 
         if (!asset || asset.amount < cryptoAmount) {
             return ctx.sendInterface(`❌ **Bestand zu niedrig!**`);
         }
 
-        // 1-Stunden-Check für Immobilien-Volumen
         const isEligible = isTradeEligibleForVolume(asset.created_at);
         const { payout, fee } = calculateTrade(cryptoAmount, coin.price);
         const tradeVolumeEuro = cryptoAmount * coin.price;
 
-        // DB Update: Balance hoch, Gebühr abziehen, Volume nur addieren wenn eligible
         await supabase.rpc('execute_trade_sell', {
             p_user_id: userId,
             p_payout: payout,
@@ -177,11 +176,10 @@ export async function handleSell(ctx, coinId, cryptoAmount) {
         }
 
         await logTransaction(userId, 'sell_crypto', payout, `Verkauf ${cryptoAmount} ${coinId.toUpperCase()}`);
-        
-        // Push Benachrichtigung
-        await ctx.answerCbQuery(`💰 Verkauf erfolgreich: +${payout.toLocaleString('de-DE')} €`, { show_alert: false });
+        await ctx.answerCbQuery(`💰 Verkauf erfolgreich: +${formatCurrency(payout)}`, { show_alert: false });
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Verkauf-Fehler:", err);
+        ctx.answerCbQuery("🚨 Verkauf konnte nicht verarbeitet werden.");
     }
 }
