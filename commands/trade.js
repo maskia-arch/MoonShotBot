@@ -1,5 +1,5 @@
 // commands/trade.js
-import { updateMarketPrices, getCoinPrice } from '../logic/market.js';
+import { getMarketData, getCoinPrice } from '../logic/market.js'; // getMarketData für schnellen Cache
 import { supabase } from '../supabase/client.js';
 import { tradingViewLayout, divider } from '../ui/layouts.js';
 import { coinListButtons, coinActionButtons } from '../ui/buttons.js';
@@ -7,17 +7,19 @@ import { logger } from '../utils/logger.js';
 import { logTransaction, updateTradeStats } from '../supabase/queries.js';
 
 /**
- * ZENTRALE STEUERUNG: Öffnet entweder die Coin-Liste oder das Detail-Menü.
+ * ZENTRALE STEUERUNG: Zeigt die Coin-Liste oder das Detail-Menü.
+ * Nutzt den optimierten Cache, um "Warten auf Marktdaten" zu verhindern.
  */
 export async function showTradeMenu(ctx, coinId = null) {
     const userId = ctx.from.id;
 
     try {
-        // 1. Marktdaten abrufen
-        const marketData = await updateMarketPrices();
+        // 1. Marktdaten aus dem Cache holen (schnell!)
+        const marketData = await getMarketData();
         
+        // Falls der Cache trotz allem leer ist (z.B. API-Fehler beim Start)
         if (!marketData || Object.keys(marketData).length === 0) {
-            const waitMsg = "⏳ Marktdaten werden geladen... bitte einen Moment Geduld.";
+            const waitMsg = "⏳ Die Märkte sind gerade schwer erreichbar. Bitte versuche es in wenigen Sekunden erneut.";
             return ctx.sendInterface ? await ctx.sendInterface(waitMsg) : ctx.reply(waitMsg);
         }
 
@@ -32,22 +34,25 @@ export async function showTradeMenu(ctx, coinId = null) {
                 listMsg += `${emoji} **${id.toUpperCase()}**: \`${c.price.toLocaleString()} €\` (${trend}${c.change24h.toFixed(2)}%)\n`;
             });
 
-            listMsg += `\n_Wähle einen Coin für Details und Handelsoptionen._`;
+            listMsg += `\n_Wähle einen Coin für Details._`;
 
+            // sendInterface löscht automatisch die alte Nachricht (z.B. das Portfolio)
             return await ctx.sendInterface(listMsg, coinListButtons(marketData));
         }
 
-        // --- FALL B: DETAIL-ANSICHT (KAUFEN/VERKAUFEN/WETTE) ---
+        // --- FALL B: DETAIL-ANSICHT ---
         const coin = marketData[coinId];
         if (!coin) {
-            return ctx.answerCbQuery(`❌ Coin ${coinId} nicht gefunden.`, { show_alert: true });
+            return ctx.answerCbQuery(`❌ Coin ${coinId.toUpperCase()} nicht im Markt.`, { show_alert: true });
         }
 
-        const { data: user } = await supabase
+        const { data: user, error } = await supabase
             .from('profiles')
             .select('balance')
             .eq('id', userId)
             .single();
+
+        if (error) throw error;
 
         const detailMsg = tradingViewLayout({
             symbol: coinId,
@@ -59,19 +64,19 @@ export async function showTradeMenu(ctx, coinId = null) {
 
     } catch (err) {
         logger.error(`Fehler im Trade-System:`, err);
-        ctx.answerCbQuery("🚨 Fehler beim Laden der Marktdaten.");
+        ctx.answerCbQuery("🚨 Marktdaten konnten nicht verarbeitet werden.");
     }
 }
 
 /**
- * Wickelt einen Kauf ab (Market Order)
+ * Wickelt einen Kauf ab
  */
 export async function handleBuy(ctx, coinId, amountEur, leverage = 1) {
     const userId = ctx.from.id;
 
     try {
         const coin = await getCoinPrice(coinId);
-        if (!coin) return ctx.answerCbQuery("❌ Preis aktuell nicht verfügbar.");
+        if (!coin) return ctx.answerCbQuery("❌ Kurs aktuell nicht verfügbar.");
 
         const { data: user } = await supabase.from('profiles').select('balance').eq('id', userId).single();
 
@@ -96,7 +101,7 @@ export async function handleBuy(ctx, coinId, amountEur, leverage = 1) {
         
         await ctx.answerCbQuery("🚀 Kauf erfolgreich!");
         
-        // Zurück zur Detailansicht des Coins
+        // Menü aktualisieren
         return showTradeMenu(ctx, coinId);
 
     } catch (err) {
