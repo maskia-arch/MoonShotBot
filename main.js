@@ -23,43 +23,46 @@ const bot = new Telegraf(CONFIG.TELEGRAM_TOKEN);
 bot.use(session());
 
 /**
- * ZENTRALE FUNKTION: sendInterface
- * Sorgt für ein immersives Erlebnis, indem alte Nachrichten gelöscht 
- * oder editiert werden, statt den Chat zu fluten.
+ * GLOBALER INTERFACE HANDLER
+ * Wir hängen die Funktion an den 'ctx' (Kontext), damit alle Commands 
+ * darauf zugreifen können (z.B. ctx.sendInterface(...))
  */
-async function sendInterface(ctx, text, extra = {}) {
-    // Falls es ein Inline-Button-Klick war: Editieren versuchen
-    if (ctx.callbackQuery) {
-        try {
-            return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
-        } catch (e) {
-            // Falls Text identisch oder Nachricht zu alt, ignorieren wir den Error
+bot.use(async (ctx, next) => {
+    ctx.sendInterface = async (text, extra = {}) => {
+        // Falls es ein Inline-Button-Klick war: Editieren versuchen
+        if (ctx.callbackQuery) {
+            try {
+                return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
+            } catch (e) {
+                // Falls Text identisch, ignorieren
+            }
         }
-    }
 
-    // Alte Nachricht löschen, falls vorhanden
-    if (ctx.session?.lastMessageId) {
-        try {
-            await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId);
-        } catch (e) {
-            logger.debug("Alte Nachricht konnte nicht gelöscht werden.");
+        // Alte Nachricht löschen, falls vorhanden
+        if (ctx.session?.lastMessageId) {
+            try {
+                await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId);
+            } catch (e) {
+                // Nachricht vielleicht schon gelöscht
+            }
         }
-    }
 
-    // Neue Nachricht senden und ID speichern
-    const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
-    ctx.session.lastMessageId = msg.message_id;
-}
+        // Neue Nachricht senden und ID speichern
+        const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
+        ctx.session.lastMessageId = msg.message_id;
+        return msg;
+    };
+    await next();
+});
 
 // 3. Fehlerbehandlung
 bot.catch((err, ctx) => {
     logger.error(`Kritischer Fehler bei Update ${ctx.update.update_id}:`, err);
 });
 
-// 4. Befehle & Menü-Handler (Nutzen jetzt sendInterface indirekt via Commands)
+// 4. Befehle & Menü-Handler
 bot.command('start', (ctx) => handleStart(ctx));
 
-// Diese Handler rufen Funktionen auf, in denen wir intern sendInterface nutzen sollten
 bot.hears('📈 Trading Center', (ctx) => showTradeMenu(ctx));
 bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
 bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));

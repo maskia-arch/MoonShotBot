@@ -7,46 +7,76 @@ import { CONFIG } from '../config.js';
 
 /**
  * Verarbeitet den /start Befehl.
- * Erstellt den User-Account und zeigt das Intro.
+ * Erstellt den User-Account (falls neu) und zeigt das Intro oder ein Willkommen zurück.
  */
 export async function handleStart(ctx) {
     const userId = ctx.from.id;
-    const username = ctx.from.username || ctx.from.first_name || 'Hustler';
+    const firstName = ctx.from.first_name || 'Hustler';
+    const username = ctx.from.username || firstName;
 
     try {
-        // 1. Tipp-Indikator senden (wirkt lebendiger)
         await ctx.sendChatAction('typing');
 
-        // 2. User in Supabase registrieren oder laden
+        // 1. User-Daten synchronisieren
+        // Wir nutzen syncUser, um zu prüfen, ob der User neu ist
         const userData = await syncUser(userId, username);
 
         if (!userData) {
             throw new Error("User-Synchronisierung fehlgeschlagen");
         }
 
-        // 3. Den atmosphärischen Onkel-Brief aus den Layouts generieren
-        const welcomeMessage = uncleLetterLayout(ctx.from.first_name);
+        // 2. Logik: Ist der User neu oder ein Rückkehrer?
+        // Wir prüfen das Erst-Anmeldedatum (created_at). 
+        // Wenn es weniger als 10 Sekunden her ist, gilt er als "neu registriert".
+        const isNewUser = new Date() - new Date(userData.created_at) < 10000;
 
-        // 4. Nachricht senden und das Haupt-Menü (Keyboard) aktivieren
-        await ctx.reply(welcomeMessage, {
-            parse_mode: 'Markdown',
-            ...mainKeyboard
-        });
+        if (isNewUser) {
+            // --- ERST-INITIALISIERUNG: ONKEL WILLI BRIEF ---
+            const welcomeMessage = uncleLetterLayout(firstName);
 
-        // 5. Kleines Follow-up für die ersten Schritte
-        setTimeout(async () => {
-            await ctx.reply(
-                `💡 **Dein erster Schritt:** Klicke unten auf "📈 Trading Center", um deine ersten Coins zu kaufen. Dein Onkel beobachtet dich!`,
-                { parse_mode: 'Markdown' }
-            );
-        }, 2000);
+            const sentMsg = await ctx.reply(welcomeMessage, {
+                parse_mode: 'Markdown',
+                ...mainKeyboard
+            });
 
-        logger.info(`Neuer Spieler registriert: ${username} (${userId})`);
+            // Brief dauerhaft anpinnen
+            try {
+                await ctx.pinChatMessage(sentMsg.message_id);
+            } catch (e) {
+                logger.debug("Pinnen im Privat-Chat fehlgeschlagen (evtl. Bot-Rechte).");
+            }
+
+            // Für das immersive Interface speichern
+            ctx.session.lastMessageId = sentMsg.message_id;
+
+            // Optionales kurzes Follow-up
+            setTimeout(async () => {
+                await ctx.reply(
+                    `💡 **Dein Erbe wartet:** Nutze das Menü unten, um dein Imperium zu starten.`,
+                    { parse_mode: 'Markdown' }
+                );
+            }, 1500);
+
+            logger.info(`Neuer Spieler registriert: ${username} (${userId})`);
+
+        } else {
+            // --- RÜCKKEHRER: SAUBERES INTERFACE ---
+            const welcomeBackMsg = `👋 **Willkommen zurück, ${firstName}!**\n\nDeine Portfolios sind bereit. Was ist dein nächster Move?`;
+            
+            // Nutzt die zentrale sendInterface Logik aus der main.js
+            if (ctx.sendInterface) {
+                await ctx.sendInterface(welcomeBackMsg, mainKeyboard);
+            } else {
+                const msg = await ctx.reply(welcomeBackMsg, {
+                    parse_mode: 'Markdown',
+                    ...mainKeyboard
+                });
+                ctx.session.lastMessageId = msg.message_id;
+            }
+        }
 
     } catch (err) {
         logger.error("Fehler im Start-Command:", err);
-        await ctx.reply(
-            `${CONFIG.EMOJIS.ERROR} Ups! Onkel Willi ist gerade nicht erreichbar. Versuche es gleich noch einmal mit /start.`
-        );
+        await ctx.reply("🚨 Ein Fehler ist aufgetreten. Bitte versuche es später noch einmal.");
     }
 }
