@@ -1,5 +1,6 @@
 // ui/buttons.js
 import { Markup } from 'telegraf';
+import { formatCurrency } from '../utils/formatter.js';
 
 /**
  * Das Hauptmenü (Untere Tastatur)
@@ -12,13 +13,17 @@ export const mainKeyboard = Markup.keyboard([
 
 /**
  * 1. COIN-LISTE (Übersicht)
+ * Fix: Nutzt jetzt formatCurrency für saubere 2 Nachkommastellen auf den Buttons.
  */
 export const coinListButtons = (marketData) => {
     const buttons = Object.keys(marketData).map(id => {
         const coin = marketData[id];
         const change = coin.change24h >= 0 ? '📈' : '📉';
-        // Nutze de-DE Formatierung für Konsistenz mit dem Rest des Bots
-        return [Markup.button.callback(`${change} ${id.toUpperCase()} (${coin.price.toLocaleString('de-DE')} €)`, `view_coin_${id}`)];
+        
+        // Formatiert den Button-Text einheitlich
+        const buttonLabel = `${change} ${id.toUpperCase()} (${formatCurrency(coin.price)})`;
+        
+        return [Markup.button.callback(buttonLabel, `view_coin_${id}`)];
     });
     
     buttons.push([Markup.button.callback('🏠 Zurück zum Hauptmenü', 'main_menu')]);

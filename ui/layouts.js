@@ -1,5 +1,5 @@
 // ui/layouts.js
-import { formatCurrency, formatPercent } from '../utils/formatter.js';
+import { formatCurrency, formatPercent, formatProgressBar } from '../utils/formatter.js';
 import { CONFIG } from '../config.js';
 
 // --- BASIS KOMPONENTEN ---
@@ -11,15 +11,6 @@ export const renderHeader = (title) => `🏆 **${title.toUpperCase()}**`;
 export const renderFooter = () => `\n🎮 _MoonShot Tycoon v${CONFIG.VERSION}_`;
 
 export const renderBalanceSnippet = (balance) => `Kontostand: \`${formatCurrency(balance)}\``;
-
-/**
- * Hilfsfunktion für Zustandsbalken (Immobilien)
- */
-const formatProgressBar = (value) => {
-    const total = 5;
-    const filled = Math.round((value / 100) * total);
-    return '🟩'.repeat(filled) + '⬜'.repeat(total - filled) + ` ${value}%`;
-};
 
 // --- LAYOUTS ---
 
@@ -41,25 +32,40 @@ ${renderFooter()}
 };
 
 /**
- * Portfolio-Layout: Zeigt jetzt auch den Live-Gewinn (PnL) an.
+ * Portfolio-Layout: Zeigt PnL und Fortschritt zum Immobilien-Limit an.
  */
 export const portfolioLayout = (userData, assets = []) => {
+    const targetVolume = 30000;
+    const currentVolume = userData.trading_volume || 0;
+    const remaining = Math.max(targetVolume - currentVolume, 0);
+
     let message = [
         renderHeader("Dein Vermögen"),
         renderBalanceSnippet(userData.balance),
-        `Handelsvolumen: \`${formatCurrency(userData.trading_volume)}\``,
-        divider,
-        `📊 **Assets:** ${assets.length > 0 ? '' : '_Noch keine Assets vorhanden._'}`
+        `Handelsvolumen: \`${formatCurrency(currentVolume)}\``,
+        divider
     ];
+
+    // Status der Immobilien-Sperre anzeigen
+    if (remaining > 0) {
+        message.push(`⚠️ **Immobilien-Sperre**`);
+        message.push(`Fortschritt: ${formatProgressBar(currentVolume, targetVolume)}`);
+        message.push(`Handel noch \`${formatCurrency(remaining)}\` für Zugriff.\n`);
+    } else {
+        message.push(`✅ **Immobilien-Markt freigeschaltet!**\n`);
+    }
+
+    message.push(`📊 **Assets:** ${assets.length > 0 ? '' : '_Noch keine Assets vorhanden._'}`);
 
     assets.forEach(asset => {
         if(asset.type === 'crypto') {
-            // Zeigt Profit/Verlust in Prozent an
-            const profitStr = asset.profit >= 0 ? `+${formatPercent(asset.profit)}` : formatPercent(asset.profit);
+            const profitStr = asset.profit >= 0 ? formatPercent(asset.profit) : formatPercent(asset.profit);
             const emoji = asset.profit >= 0 ? '📈' : '📉';
             message.push(`${emoji} **${asset.symbol.toUpperCase()}**: \`${asset.amount}\` (PnL: ${profitStr})`);
         } else {
-            message.push(`• **${asset.name}**: ${formatProgressBar(asset.condition)}`);
+            // Für echte Immobilien nutzen wir den 5-Segment Balken
+            const bar = '🟩'.repeat(Math.round(asset.condition / 20)) + '⬜'.repeat(5 - Math.round(asset.condition / 20));
+            message.push(`🏠 **${asset.name}**: ${bar} ${asset.condition}%`);
         }
     });
 
@@ -71,12 +77,11 @@ export const portfolioLayout = (userData, assets = []) => {
  * Detailansicht eines Coins im Trading Center
  */
 export const tradingViewLayout = (coinData, userBalance) => {
-    const changeEmoji = coinData.change24h >= 0 ? '🟢' : '🔴';
-    const trend = coinData.change24h >= 0 ? '+' : '';
+    // Vorzeichen manuell setzen für saubere Optik
     return `
 ${renderHeader(`Trading: ${coinData.symbol.toUpperCase()}`)}
 Preis: \`${formatCurrency(coinData.price)}\`
-24h Change: ${changeEmoji} \`${trend}${formatPercent(coinData.change24h)}\`
+24h Change: ${formatPercent(coinData.change24h)}
 
 ${renderBalanceSnippet(userBalance)}
 ${divider}

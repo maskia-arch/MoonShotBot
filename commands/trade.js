@@ -51,7 +51,7 @@ export async function showTradeMenu(ctx, coinId = null) {
 
     } catch (err) {
         logger.error(`Fehler im Trade-System:`, err);
-        ctx.answerCbQuery("🚨 Marktdaten-Fehler.");
+        if (ctx.callbackQuery) ctx.answerCbQuery("🚨 Marktdaten-Fehler.");
     }
 }
 
@@ -90,12 +90,13 @@ export async function initiateTradeInput(ctx, coinId, type) {
         ]));
     } catch (err) {
         logger.error("Fehler bei Trade-Initialisierung:", err);
-        ctx.answerCbQuery("🚨 Fehler beim Starten der Eingabe.");
+        if (ctx.callbackQuery) ctx.answerCbQuery("🚨 Fehler beim Starten der Eingabe.");
     }
 }
 
 /**
  * Verarbeitet den Kauf (inkl. 0,5% Gebühr für den Wirtschafts-Topf).
+ * Fix: Entfernung von answerCbQuery bei Text-Input.
  */
 export async function handleBuy(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
@@ -135,16 +136,18 @@ export async function handleBuy(ctx, coinId, cryptoAmount) {
             created_at: new Date()
         }, { onConflict: 'user_id,coin_id' });
 
-        await ctx.answerCbQuery(`✅ Kauf erfolgreich: ${formatCrypto(cryptoAmount)} ${coinId.toUpperCase()}`, { show_alert: false });
+        // Bestätigung per Nachricht senden statt answerCbQuery
+        await ctx.reply(`✅ Kauf erfolgreich: ${formatCrypto(cryptoAmount)} ${coinId.toUpperCase()}`);
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Kauf-Fehler:", err);
-        ctx.answerCbQuery("🚨 Kauf konnte nicht verarbeitet werden.");
+        await ctx.reply("🚨 Kauf konnte nicht verarbeitet werden.");
     }
 }
 
 /**
  * Verarbeitet den Verkauf (inkl. Haltefrist-Check).
+ * Fix: Entfernung von answerCbQuery bei Text-Input.
  */
 export async function handleSell(ctx, coinId, cryptoAmount) {
     const userId = ctx.from.id;
@@ -176,10 +179,12 @@ export async function handleSell(ctx, coinId, cryptoAmount) {
         }
 
         await logTransaction(userId, 'sell_crypto', payout, `Verkauf ${cryptoAmount} ${coinId.toUpperCase()}`);
-        await ctx.answerCbQuery(`💰 Verkauf erfolgreich: +${formatCurrency(payout)}`, { show_alert: false });
+        
+        // Bestätigung per Nachricht senden statt answerCbQuery
+        await ctx.reply(`💰 Verkauf erfolgreich: +${formatCurrency(payout)}`);
         return showTradeMenu(ctx, coinId);
     } catch (err) {
         logger.error("Verkauf-Fehler:", err);
-        ctx.answerCbQuery("🚨 Verkauf konnte nicht verarbeitet werden.");
+        await ctx.reply("🚨 Verkauf konnte nicht verarbeitet werden.");
     }
 }
