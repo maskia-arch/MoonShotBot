@@ -1,5 +1,5 @@
 // main.js
-import { Telegraf, session } from 'telegraf';
+import { Telegraf, session, Markup } from 'telegraf';
 import http from 'http'; 
 import { CONFIG } from './config.js';
 import { logger } from './utils/logger.js';
@@ -11,6 +11,7 @@ import { showWallet } from './commands/wallet.js';
 import { showLeaderboard } from './commands/rank.js';
 import { startGlobalScheduler } from './core/scheduler.js';
 import { getVersion } from './utils/versionLoader.js';
+import { mainKeyboard } from './ui/buttons.js';
 
 // 1. Bot-Instanz erstellen
 if (!CONFIG.TELEGRAM_TOKEN) {
@@ -24,12 +25,10 @@ bot.use(session());
 
 /**
  * GLOBALER INTERFACE HANDLER
- * Wir hängen die Funktion an den 'ctx' (Kontext), damit alle Commands 
- * darauf zugreifen können (z.B. ctx.sendInterface(...))
+ * Macht ctx.sendInterface überall verfügbar
  */
 bot.use(async (ctx, next) => {
     ctx.sendInterface = async (text, extra = {}) => {
-        // Falls es ein Inline-Button-Klick war: Editieren versuchen
         if (ctx.callbackQuery) {
             try {
                 return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
@@ -38,16 +37,14 @@ bot.use(async (ctx, next) => {
             }
         }
 
-        // Alte Nachricht löschen, falls vorhanden
         if (ctx.session?.lastMessageId) {
             try {
                 await ctx.telegram.deleteMessage(ctx.chat.id, ctx.session.lastMessageId);
             } catch (e) {
-                // Nachricht vielleicht schon gelöscht
+                // Nachricht bereits weg
             }
         }
 
-        // Neue Nachricht senden und ID speichern
         const msg = await ctx.reply(text, { parse_mode: 'Markdown', ...extra });
         ctx.session.lastMessageId = msg.message_id;
         return msg;
@@ -68,14 +65,30 @@ bot.hears('🏠 Immobilien', (ctx) => showImmoMarket(ctx));
 bot.hears('💰 Mein Portfolio', (ctx) => showWallet(ctx));
 bot.hears('🏆 Bestenliste', (ctx) => showLeaderboard(ctx, 'wealth'));
 
-// 5. Callback-Query Handler (Ranking Filter)
+// 5. Callback-Query Handler (Interaktionen)
 bot.on('callback_query', async (ctx) => {
     const action = ctx.callbackQuery.data;
     logger.info(`Action: ${action} von User ${ctx.from.id}`);
 
+    // --- Trading Center Navigation ---
+    if (action === 'open_trading_center') {
+        return showTradeMenu(ctx);
+    }
+
+    if (action.startsWith('view_coin_')) {
+        const coinId = action.split('_')[2];
+        return showTradeMenu(ctx, coinId);
+    }
+
+    // --- Ranking Filter ---
     if (action === 'rank_wealth') return showLeaderboard(ctx, 'wealth');
     if (action === 'rank_profit') return showLeaderboard(ctx, 'profit');
     if (action === 'rank_loser') return showLeaderboard(ctx, 'loser');
+
+    // --- Globaler Zurück-Button ---
+    if (action === 'main_menu') {
+        return ctx.sendInterface("🏠 **Hauptmenü**\nNutze die Tastatur unten für deine Aktionen.", mainKeyboard);
+    }
 
     await ctx.answerCbQuery();
 });

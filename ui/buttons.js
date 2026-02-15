@@ -12,13 +12,11 @@ export const mainKeyboard = Markup.keyboard([
 
 /**
  * 1. COIN-LISTE (Übersicht)
- * Erzeugt für jeden aktiven Coin eine Zeile mit Trend-Emoji.
  */
 export const coinListButtons = (marketData) => {
     const buttons = Object.keys(marketData).map(id => {
         const coin = marketData[id];
         const change = coin.change24h >= 0 ? '📈' : '📉';
-        // Beispiel: "📈 BITCOIN (58.000€)"
         return [Markup.button.callback(`${change} ${id.toUpperCase()} (${coin.price.toLocaleString()}€)`, `view_coin_${id}`)];
     });
     
@@ -28,7 +26,6 @@ export const coinListButtons = (marketData) => {
 
 /**
  * 2. COIN-DETAIL-MENÜ (Kauf/Verkauf/Wette)
- * Das Menü, das erscheint, wenn man einen Coin ausgewählt hat.
  */
 export const coinActionButtons = (coinId) => {
     return Markup.inlineKeyboard([
@@ -42,7 +39,12 @@ export const coinActionButtons = (coinId) => {
 };
 
 /**
- * 3. HEBEL-AUSWAHL (Für die Kurs-Wette)
+ * FALLBACK: Alte Funktion, falls noch in trade.js importiert
+ */
+export const tradeControlButtons = (coinId) => coinActionButtons(coinId);
+
+/**
+ * 3. HEBEL-AUSWAHL
  */
 export const leverageButtons = (coinId) => {
     return Markup.inlineKeyboard([
@@ -60,7 +62,17 @@ export const leverageButtons = (coinId) => {
 };
 
 /**
- * Bestehende Immobilien-Buttons
+ * 4. BESTÄTIGUNGS-BUTTONS
+ */
+export const confirmAction = (actionId) => {
+    return Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Bestätigen', `confirm_${actionId}`)],
+        [Markup.button.callback('❌ Abbrechen', 'cancel_action')]
+    ]);
+};
+
+/**
+ * Immobilien-Buttons
  */
 export const immoMarketButtons = (immoId) => {
     return Markup.inlineKeyboard([
@@ -70,7 +82,7 @@ export const immoMarketButtons = (immoId) => {
 };
 
 /**
- * Portfolio & Verlauf
+ * Portfolio-Buttons
  */
 export const portfolioButtons = Markup.inlineKeyboard([
     [
