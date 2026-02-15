@@ -1,12 +1,14 @@
 // ui/layouts.js
 import { formatCurrency, formatPercent } from '../utils/formatter.js';
+import { CONFIG } from '../config.js'; // NEU: Import für die Version
 
-// --- BASIS KOMPONENTEN (Direkt hier definiert, um Import-Fehler zu vermeiden) ---
+// --- BASIS KOMPONENTEN ---
 export const divider = "----------------------------------";
 
 export const renderHeader = (title) => `🏆 **${title.toUpperCase()}**`;
 
-export const renderFooter = () => `\n🎮 _MoonShot Tycoon v1.0_`;
+// DYNAMISCH: Nutzt jetzt die Version aus der config.js (version.txt)
+export const renderFooter = () => `\n🎮 _MoonShot Tycoon v${CONFIG.VERSION}_`;
 
 export const renderBalanceSnippet = (balance) => `Kontostand: \`${formatCurrency(balance)}\``;
 
@@ -19,11 +21,8 @@ const formatProgressBar = (value) => {
     return '🟩'.repeat(filled) + '⬜'.repeat(total - filled) + ` ${value}%`;
 };
 
-// --- LAYOUTS ---
+// --- LAYOUTS (Rest bleibt gleich, nutzt aber nun den dynamischen Footer) ---
 
-/**
- * Der atmosphärische Einstieg: Onkel Willis Brief
- */
 export const uncleLetterLayout = (userName) => {
     return `
 ✉️ **EIN BRIEF AUS DER TOSKANA**
@@ -41,9 +40,6 @@ ${renderFooter()}
 `;
 };
 
-/**
- * Die Dashboard-Ansicht (Portfolio)
- */
 export const portfolioLayout = (userData, assets = []) => {
     let message = [
         renderHeader("Dein Vermögen"),
@@ -65,9 +61,6 @@ export const portfolioLayout = (userData, assets = []) => {
     return message.join('\n');
 };
 
-/**
- * Das Trading-Interface für einen spezifischen Coin
- */
 export const tradingViewLayout = (coinData, userBalance) => {
     return `
 ${renderHeader(`Trading: ${coinData.symbol.toUpperCase()}`)}
@@ -81,9 +74,6 @@ ${renderFooter()}
 `;
 };
 
-/**
- * Die Immobilien-Marktplatz Ansicht
- */
 export const immoMarketLayout = (availableImmos, userBalance) => {
     let message = [
         renderHeader("Immobilien-Markt"),

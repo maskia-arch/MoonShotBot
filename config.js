@@ -2,9 +2,10 @@
 import { getVersion } from './utils/versionLoader.js';
 
 export const CONFIG = {
-    // --- BOT INFO (Sicherheit durch process.env) ---
+    // --- BOT INFO ---
+    // Wir rufen die Version einmal hier zentral ab
     VERSION: getVersion(),
-    TELEGRAM_TOKEN: process.env.BOT_TOKEN, // Muss in Render exakt "BOT_TOKEN" heißen
+    TELEGRAM_TOKEN: process.env.BOT_TOKEN, 
     
     // --- SUPABASE CONFIG ---
     SUPABASE_URL: process.env.SUPABASE_URL,
@@ -28,7 +29,8 @@ export const CONFIG = {
     
     // --- KRYPTO EINSTELLUNGEN ---
     COINGECKO_BASE_URL: 'https://api.coingecko.com/api/v3',
-    SUPPORTED_COINS: ['bitcoin', 'ethereum', 'solana', 'cardano', 'dogecoin'],
+    // Hier auf Bitcoin und Litecoin begrenzt:
+    SUPPORTED_COINS: ['bitcoin', 'litecoin'], 
     
     // --- DESIGN & EMOJIS ---
     EMOJIS: {
@@ -41,7 +43,6 @@ export const CONFIG = {
     }
 };
 
-// Validierung beim Start
 if (!CONFIG.TELEGRAM_TOKEN) {
-    console.error("❌ FEHLER: BOT_TOKEN ist nicht gesetzt! Prüfe deine Render Environment Variables.");
+    console.error("❌ FEHLER: BOT_TOKEN ist nicht gesetzt!");
 }
